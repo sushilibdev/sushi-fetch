@@ -1,0 +1,65 @@
+{
+  "name": "sushi-fetch",
+  "version": "0.1.0",
+  "description": "🍣 A tiny but powerful data-fetching & caching library for modern JavaScript & TypeScript apps",
+  "keywords": [
+    "fetch",
+    "http",
+    "cache",
+    "data-fetching",
+    "typescript",
+    "javascript",
+    "api",
+    "client",
+    "request",
+    "swr",
+    "axios-alternative"
+  ],
+  "homepage": "https://github.com/sushilibdev/sushi-fetch",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sushilibdev/sushi-fetch.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sushilibdev/sushi-fetch/issues"
+  },
+  "author": "sushilibdev",
+  "license": "MIT",
+
+  "type": "commonjs",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+
+  "exports": {
+  ".": {
+    "types": "./dist/index.d.ts",
+    "import": "./dist/index.mjs",
+    "require": "./dist/index.cjs"
+    }
+  },
+
+  "files": [
+    "dist"
+  ],
+
+  "scripts": {
+    "dev": "ts-node examples/vanilla-js/app.ts",
+    "build": "tsup src/index.ts --format esm,cjs --dts",
+    "watch": "tsup src/index.ts --format esm,cjs --dts --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "prepare": "npm run build"
+  },
+
+  "dependencies": {
+    "node-fetch": "^2.7.0"
+  },
+
+  "devDependencies": {
+    "@types/node-fetch": "^2.6.13",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "tsup": "^8.0.1"
+  }
+}
