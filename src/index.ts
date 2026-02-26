@@ -1,11 +1,58 @@
-// Core API
-export { fetcher, sushiFetch, sushiCache } from "./core/fetcher"
+/**
+ * 🍣 Sushi Fetch
+ * A tiny but powerful data-fetching & caching library
+ * -----------------------------------------------
+ * Public API entry point
+ */
 
-// Cache engine
-export { SushiCache } from "./core/cache"
+// ==============================
+// CORE FETCH API
+// ==============================
 
-// Optional: re-export useful types (future-proofing)
+export {
+  fetcher,
+  sushiFetch,
+  sushiCache,
+  addSushiMiddleware // 💡 Ditambahkan agar user bisa pasang middleware global
+} from "./core/fetcher.js"
+
+// ==============================
+// CACHE ENGINE
+// ==============================
+
+export {
+  SushiCache
+} from "./core/cache.js"
+
+// ==============================
+// TYPE EXPORTS
+// ==============================
+
 export type {
-  // nanti kalau kamu punya type seperti FetchOptions dll
-  // tinggal export di sini
-} from "./core/fetcher"
+  FetchOptions,
+} from "./core/fetcher.js"
+
+// 💡 Catatan: Pastikan kamu menambahkan kata 'export' di depan `type CacheOptions` 
+// di dalam file cache.ts jika ingin mengekspornya di sini.
+export type {
+  CacheListener // 💡 Diekspor agar user bisa membuat custom hooks/langganan cache
+} from "./core/cache.js"
+
+// ==============================
+// FUTURE EXTENSIONS (placeholder)
+// ==============================
+
+/**
+ * Example for future:
+ *
+ * export { createClient } from "./client"
+ * export { createStore } from "./store"
+ *
+ * export type { ClientOptions } from "./client"
+ */
+
+// ==============================
+// VERSION
+// ==============================
+
+export const VERSION = "0.1.0"

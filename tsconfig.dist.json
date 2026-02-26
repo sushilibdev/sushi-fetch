@@ -1,0 +1,58 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    
+    /* ========================================= */
+    /* 🚀 TARGET & MODULE                        */
+    /* ========================================= */
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    /* ========================================= */
+    /* 📦 LIBRARY PUBLISHING (NPM)               */
+    /* ========================================= */
+    // Wajib true agar pengguna dapat fitur Autocomplete / IntelliSense
+    "declaration": true,
+    
+    // Wajib true agar saat pengguna klik "Go to Definition" di VSCode, 
+    // mereka diarahkan ke kode aslimu, bukan file .d.ts yang membingungkan
+    "declarationMap": true,
+    
+    // Wajib true agar pesan error di console menunjukkan baris kode yang benar
+    "sourceMap": true,
+    
+    // Memasukkan source code asli ke dalam sourceMap agar lebih mudah di-debug
+    "inlineSources": true,
+
+    /* ========================================= */
+    /* 🧹 CLEANUP & SAFETY                       */
+    /* ========================================= */
+    // Menghapus komentar biasa (//), tapi TypeScript otomatis TETAP 
+    // mempertahankan komentar JSDoc (/** */) untuk dokumentasi hover!
+    "removeComments": true,
+    
+    // Wajib false agar tsc benar-benar menghasilkan file di folder dist
+    "noEmit": false,
+    
+    // Mencegah build sukses jika ada error tipe data yang terlewat
+    "noEmitOnError": true
+  },
+  
+  /* ========================================= */
+  /* 🎯 FOKUS HANYA PADA CORE LIBRARY          */
+  /* ========================================= */
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "examples",
+    "tests",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "**/__tests__/**/*"
+  ]
+}

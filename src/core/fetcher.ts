@@ -1,5 +1,4 @@
-import fetch, { Response, RequestInit } from "node-fetch"
-import { SushiCache } from "./cache"
+import { SushiCache } from "./cache.js"
 
 /* ============================= */
 /* ========= GLOBALS =========== */
@@ -9,7 +8,21 @@ const cache = new SushiCache()
 const pendingRequests = new Map<string, Promise<unknown>>()
 const revalidateLocks = new Set<string>()
 
+// 💡 OPTIMASI: Map khusus untuk tag yang jauh lebih hemat memori dan cepat
+const tagMap = new Map<string, Set<string>>()
+
 const DEFAULT_TTL = 5000
+const __DEV__ = process.env.NODE_ENV !== "production"
+
+/* ============================= */
+/* ========= DEBUG ============= */
+/* ============================= */
+
+function debug(...args: any[]) {
+  if (__DEV__) {
+    console.log("[sushi-fetch]", ...args)
+  }
+}
 
 /* ============================= */
 /* ========= TYPES ============= */
@@ -67,12 +80,15 @@ export function addMiddleware(mw: Middleware) {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-function buildAbortController(timeout?: number): AbortController | null {
+function buildAbortController(timeout?: number) {
   if (!timeout) return null
+
   const controller = new AbortController()
   const id = setTimeout(() => controller.abort(), timeout)
-  // cleanup timer on abort
+
+  // Bersihkan timeout jika abort dipanggil dari tempat lain
   controller.signal.addEventListener("abort", () => clearTimeout(id))
+
   return controller
 }
 
@@ -82,8 +98,36 @@ function computeBackoff(
   strategy: "fixed" | "exponential"
 ) {
   if (strategy === "fixed") return base
-  return base * Math.pow(2, attempt) + Math.random() * 100
+  return base * Math.pow(2, attempt) + Math.random() * 100 // + jitter biar nggak tabrakan
 }
+
+/* ============================= */
+/* ========= KEY BUILDER ======= */
+/* ============================= */
+
+function stableStringify(obj: any): string {
+  if (!obj) return ""
+  return JSON.stringify(
+    Object.keys(obj)
+      .sort()
+      .reduce((acc: any, key) => {
+        acc[key] = obj[key]
+        return acc
+      }, {})
+  )
+}
+
+function buildCacheKey(url: string, options: RequestInit): string {
+  return `${url}::${stableStringify({
+    method: options.method || "GET",
+    body: options.body,
+    headers: options.headers,
+  })}`
+}
+
+/* ============================= */
+/* ========= RETRY CORE ======== */
+/* ============================= */
 
 async function retryFetch<T>(
   fn: () => Promise<T>,
@@ -97,15 +141,27 @@ async function retryFetch<T>(
   while (true) {
     try {
       return await fn()
-    } catch (err) {
-      const shouldRetry = retryOn ? retryOn(null, err) : true
+    } catch (err: any) {
+      // 💡 OPTIMASI: Default retry yang pintar. Hanya retry kalau masalah jaringan atau Server Error (5xx)
+      const isNetworkError = !err.status // Biasanya error dari fetch() native kalau putus koneksi
+      const isServerError = err.status >= 500
+      
+      const shouldRetry = retryOn 
+        ? retryOn(err.response || null, err) 
+        : (isNetworkError || isServerError)
+
       if (attempt >= retries || !shouldRetry) throw err
 
+      debug(`Retry attempt ${attempt + 1}/${retries} for failing request...`)
       await sleep(computeBackoff(attempt, delay, strategy))
       attempt++
     }
   }
 }
+
+/* ============================= */
+/* ========= MIDDLEWARE ======== */
+/* ============================= */
 
 async function runMiddleware(
   type: keyof Middleware,
@@ -115,16 +171,21 @@ async function runMiddleware(
   const stack = [...globalMiddleware, ...(ctx.options.middleware || [])]
 
   for (const mw of stack) {
-    const fn = mw[type]
-    if (!fn) continue
-
-    if (type === "onRequest") await fn(ctx)
-    else await fn(resOrErr as any, ctx)
+    try {
+      if (type === "onRequest" && mw.onRequest) {
+        // Aman! TypeScript tahu pasti ini fungsi onRequest (1 argumen)
+        await mw.onRequest(ctx)
+      } else if (type === "onResponse" && mw.onResponse) {
+        // Aman! TypeScript tahu pasti ini fungsi onResponse (2 argumen)
+        await mw.onResponse(resOrErr as Response, ctx)
+      } else if (type === "onError" && mw.onError) {
+        // Aman! TypeScript tahu pasti ini fungsi onError (2 argumen)
+        await mw.onError(resOrErr, ctx)
+      }
+    } catch (e) {
+      debug("Middleware error:", e)
+    }
   }
-}
-
-function buildCacheKey(url: string, options: RequestInit): string {
-  return url + JSON.stringify(options || {})
 }
 
 /* ============================= */
@@ -163,30 +224,37 @@ export async function fetcher<T = unknown>(
   if (!force && useCache) {
     const cached = cache.get<T>(key)
     if (cached !== null) {
+      debug("Cache hit:", key)
+
       if (revalidate && !revalidateLocks.has(key)) {
         revalidateLocks.add(key)
-        fetcher(url, { ...options, revalidate: false }).finally(() =>
-          revalidateLocks.delete(key)
-        )
+        // Background revalidation
+        fetcher(url, { ...options, revalidate: false, force: true })
+          .finally(() => revalidateLocks.delete(key))
+          .catch(() => debug("Background revalidation failed for", key))
       }
+
       return cached
     }
   }
 
   /* ========== DEDUP ========== */
   if (pendingRequests.has(key)) {
+    debug("Dedup hit:", key)
     return pendingRequests.get(key) as Promise<T>
   }
 
-  /* ========== REQUEST ========== */
+  debug("Fetching:", url)
 
+  /* ========== REQUEST ========== */
   const requestPromise = retryFetch(
     async () => {
       await runMiddleware("onRequest", ctx)
 
       const controller = buildAbortController(timeout)
-
-      const res = await fetch(url, {
+      
+      // 💡 OPTIMASI: Menggunakan globalThis.fetch bawaan (tidak perlu node-fetch)
+      const res = await globalThis.fetch(url, {
         ...fetchOptions,
         signal: controller?.signal,
       })
@@ -194,29 +262,43 @@ export async function fetcher<T = unknown>(
       await runMiddleware("onResponse", ctx, res)
 
       if (!validateStatus(res.status)) {
-        throw new Error(`HTTP ${res.status}`)
+        const error: any = new Error(`HTTP Error ${res.status}`)
+        error.status = res.status
+        error.response = res
+        throw error
       }
 
       let data: unknown
 
-      if (parser) data = await parser(res)
-      else if (parseJson) data = await res.json()
-      else data = await res.text()
-
-      if (transform) {
-        data = transform(data)
+      if (parser) {
+        data = await parser(res)
+      } else if (parseJson) {
+        // Cek header untuk memastikan ini JSON sebelum di-parse
+        const contentType = res.headers.get("content-type")
+        if (contentType && contentType.includes("application/json")) {
+          data = await res.json()
+        } else {
+          data = await res.text()
+        }
+      } else {
+        data = await res.text()
       }
+
+      if (transform) data = transform(data)
 
       if (useCache) {
         cache.set(key, data, ttl)
 
+        // 💡 OPTIMASI: Simpan relasi tag -> keys dengan Set (Sangat efisien)
         for (const tag of cacheTags) {
-          cache.set(`__tag__:${tag}:${key}`, true, ttl)
+          if (!tagMap.has(tag)) {
+            tagMap.set(tag, new Set())
+          }
+          tagMap.get(tag)!.add(key)
         }
       }
 
       onSuccess?.(data)
-
       return data as T
     },
     retries,
@@ -227,6 +309,14 @@ export async function fetcher<T = unknown>(
     .catch(async (err) => {
       await runMiddleware("onError", ctx, err)
       onError?.(err)
+      
+      // STALE-IF-ERROR: Kalau fetch gagal, cek apakah ada data basi di cache yang bisa dipakai
+      const staleData = cache.peek<T>(key)
+      if (staleData !== null) {
+        debug("Returning stale data due to fetch error:", key)
+        return staleData
+      }
+      
       throw err
     })
     .finally(() => {
@@ -243,18 +333,27 @@ export async function fetcher<T = unknown>(
 /* ============================= */
 
 export const sushiCache = {
-  clear: () => cache.clear(),
+  clear: () => {
+    cache.clear()
+    tagMap.clear()
+  },
   delete: (key: string) => cache.delete(key),
   has: (key: string) => cache.has(key),
 
+  // 👇 TAMBAHAN BARU: Expose fitur Pub/Sub & Mutasi dari cache.ts ke publik!
+  set: <T>(key: string, data: T, ttl?: number) => cache.set(key, data, ttl),
+  get: <T>(key: string) => cache.get<T>(key),
+  mutate: <T>(key: string, mutator: T | ((oldData: T | null) => T), ttl?: number) => cache.mutate(key, mutator, ttl),
+  subscribe: <T>(key: string, listener: (data: T | null) => void) => cache.subscribe(key, listener),
+
   invalidateTag: (tag: string) => {
-    const prefix = `__tag__:${tag}:`
-    for (const k of cache.keys()) {
-      if (k.startsWith(prefix)) {
-        const realKey = k.slice(prefix.length)
-        cache.delete(realKey)
-        cache.delete(k)
+    const keys = tagMap.get(tag)
+    if (keys) {
+      for (const key of keys) {
+        cache.delete(key)
       }
+      tagMap.delete(tag)
+      debug(`Invalidated tag: ${tag} (${keys.size} items)`)
     }
   },
 }

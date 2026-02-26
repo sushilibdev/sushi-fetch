@@ -1,10 +1,44 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
-    "module": "CommonJS",
-    "moduleResolution": "Node",
+    /* ========================================= */
+    /* 🚀 TARGET & ENVIRONMENT                   */
+    /* ========================================= */
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    /* ========================================= */
+    /* 📦 LIBRARY PUBLISHING (NPM WAJIB)         */
+    /* ========================================= */
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+
+    /* ========================================= */
+    /* 🛡️ STRICTNESS & QUALITY                   */
+    /* ========================================= */
     "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+
+    /* ========================================= */
+    /* ⚡ PERFORMANCE & INTEROP                  */
+    /* ========================================= */
     "esModuleInterop": true,
-    "outDir": "dist"
-  }
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true
+  },
+  "include": ["src/**/*"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "examples/**/*",
+    "**/*.test.ts",
+    "**/*.spec.ts"
+  ]
 }

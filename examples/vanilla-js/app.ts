@@ -1,116 +1,145 @@
-import { sushiFetch, sushiCache } from "../../src/index"
+import { sushiFetch, sushiCache } from "sushi-fetch"
+
+// ==============================
+// 🎨 HELPER: UI Terminal
+// ==============================
+const c = {
+  cyan: "\x1b[36m", green: "\x1b[32m", yellow: "\x1b[33m",
+  magenta: "\x1b[35m", reset: "\x1b[0m", dim: "\x1b[2m"
+}
+
+function section(title: string) {
+  console.log(`\n${c.cyan}==========================================${c.reset}`)
+  console.log(`${c.cyan} ${title} ${c.reset}`)
+  console.log(`${c.cyan}==========================================${c.reset}`)
+}
+
+async function measure(label: string, fn: () => Promise<void>) {
+  const start = Date.now()
+  await fn()
+  const end = Date.now()
+  const color = (end - start) < 50 ? c.magenta : c.yellow
+  console.log(`  ⏱️  ${label} took ${color}${end - start}ms${c.reset}`)
+}
+
+// ==============================
+// 🚀 EXAMPLES
+// ==============================
 
 async function basicExample() {
-  console.log("\n📌 BASIC FETCH")
-
-  const users = await sushiFetch(
-    "https://jsonplaceholder.typicode.com/users"
-  )
-
-  console.log("✅ Users:", users.length)
+  section("📌 1. BASIC FETCH")
+  const users = await sushiFetch<any[]>("https://jsonplaceholder.typicode.com/users")
+  console.log(`  ✅ Successfully retrieved ${users.length} users.`)
 }
 
 async function cacheExample() {
-  console.log("\n📦 CACHE EXAMPLE")
-
-  // first request (from network)
-  await sushiFetch("https://jsonplaceholder.typicode.com/posts")
-
-  // second request (should hit cache)
-  await sushiFetch("https://jsonplaceholder.typicode.com/posts")
-}
-
-async function revalidateExample() {
-  console.log("\n♻️ REVALIDATE (stale-while-revalidate)")
-
-  await sushiFetch("https://jsonplaceholder.typicode.com/todos", {
-    ttl: 10000,
+  section("📦 2. CACHE SPEED TEST")
+  const url = "https://jsonplaceholder.typicode.com/posts"
+  
+  await measure("First request (Network)", async () => {
+    await sushiFetch(url)
   })
 
-  // this will return cache instantly and refresh in background
-  await sushiFetch("https://jsonplaceholder.typicode.com/todos", {
-    revalidate: true,
-  })
-}
-
-async function retryExample() {
-  console.log("\n🔁 RETRY EXAMPLE")
-
-  try {
-    await sushiFetch("https://jsonplaceholder.typicode.com/invalid-url", {
-      retries: 3,
-      retryDelay: 500,
-      retryStrategy: "exponential",
-    })
-  } catch (err) {
-    console.log("❌ Failed after retries")
-  }
-}
-
-async function timeoutExample() {
-  console.log("\n⏱️ TIMEOUT EXAMPLE")
-
-  try {
-    await sushiFetch("https://jsonplaceholder.typicode.com/photos", {
-      timeout: 10, // super kecil biar timeout
-    })
-  } catch (err) {
-    console.log("⏰ Request timeout triggered")
-  }
-}
-
-async function hooksExample() {
-  console.log("\n🎣 HOOKS EXAMPLE")
-
-  await sushiFetch("https://jsonplaceholder.typicode.com/comments", {
-    onSuccess: (data) => {
-      console.log("🎉 Success hook:", data.length, "comments")
-    },
-    onError: (err) => {
-      console.log("💥 Error hook:", err.message)
-    },
+  await measure("Second request (Cache Hit) ⚡", async () => {
+    await sushiFetch(url)
   })
 }
 
 async function dedupExample() {
-  console.log("\n🔁 DEDUP REQUEST EXAMPLE")
-
-  await Promise.all([
-    sushiFetch("https://jsonplaceholder.typicode.com/albums"),
-    sushiFetch("https://jsonplaceholder.typicode.com/albums"),
-    sushiFetch("https://jsonplaceholder.typicode.com/albums"),
-  ])
+  section("🔁 3. REQUEST DEDUPLICATION")
+  console.log(`  ${c.dim}Trying to fetch 3x simultaneously...${c.reset}`)
+  
+  const url = "https://jsonplaceholder.typicode.com/albums"
+  
+  await measure("Parallel Fetches", async () => {
+    await Promise.all([
+      sushiFetch(url),
+      sushiFetch(url),
+      sushiFetch(url),
+    ])
+  })
+  console.log(`  ✅ Done! Check the server/network logs; there should only be one request going through.`)
 }
 
-async function cacheControlExample() {
-  console.log("\n🧹 CACHE CONTROL")
+async function reactivityExample() {
+  section("📡 4. PUB/SUB & MUTATION")
+  const key = "custom-data-key"
 
-  const key = "custom-users"
-
-  await sushiFetch("https://jsonplaceholder.typicode.com/users", {
-    cacheKey: key,
+  // 1. Subscribe ke perubahan cache
+  const unsubscribe = sushiCache.subscribe(key, (data) => {
+    console.log(`  👀 [Subscriber] Data changed to:`, data)
   })
 
-  console.log("🔎 Cache has key:", sushiCache.has(key))
+  console.log(`  ${c.dim}Saving initial data...${c.reset}`)
+  sushiCache.set(key, { name: "Sushi" })
 
-  sushiCache.delete(key)
+  console.log(`  ${c.dim}Mutate data...${c.reset}`)
+  // 2. Mutate (Otomatis men-trigger subscriber)
+  sushiCache.mutate(key, { name: "Sushi Premium🍣" })
 
-  console.log("🗑️ Cache deleted. Exists?", sushiCache.has(key))
+  unsubscribe() // Bersihkan memory
 }
 
+async function retryAndTimeoutExample() {
+  section("🔁 5. RETRY STRATEGY & TIMEOUT")
+
+  try {
+    console.log(`  ${c.dim}Attempting to fetch to wrong URL with 3x Retry...${c.reset}`)
+    await sushiFetch("https://jsonplaceholder.typicode.com/invalid-url", {
+      retries: 3,
+      retryDelay: 300,
+      retryStrategy: "exponential",
+    })
+  } catch {
+    console.log(`  ❌ Failed after maximum retries`)
+  }
+
+  try {
+    console.log(`  ${c.dim}Trying to fetch with 10ms timeout...${c.reset}`)
+    await sushiFetch("https://jsonplaceholder.typicode.com/photos", {
+      timeout: 10,
+    })
+  } catch (err: any) {
+    console.log(`  ⏰ Timeout successfully triggered! (${err.name || "AbortError"})`)
+  }
+}
+
+async function cacheTagsExample() {
+  section("🧹 6. CACHE TAGS & CONTROL")
+  const url1 = "https://jsonplaceholder.typicode.com/users/1"
+  const url2 = "https://jsonplaceholder.typicode.com/users/2"
+
+  // Tambahkan cacheKey secara eksplisit agar mudah dicek
+  await Promise.all([
+    sushiFetch(url1, { cacheKey: url1, cacheTags: ["users-group"] }),
+    sushiFetch(url2, { cacheKey: url2, cacheTags: ["users-group"] })
+  ])
+
+  console.log(`  🔎 URL 1 in Cache? ${sushiCache.has(url1)}`) // Pasti true!
+  console.log(`  🔎 URL 2 in Cache? ${sushiCache.has(url2)}`) // Pasti true!
+
+  console.log(`  🗑️ Removing tag 'users-group'...`)
+  sushiCache.invalidateTag("users-group")
+
+  console.log(`  🔎 URL 1 in Cache? ${sushiCache.has(url1)}`) // Pasti false!
+  console.log(`  🔎 URL 2 in Cache? ${sushiCache.has(url2)}`) // Pasti false!
+}
+
+// ==============================
+// 🏁 RUNNER
+// ==============================
+
 async function runAll() {
-  console.log("🚀 SUSHI-FETCH DEMO START")
+  console.log(`\n${c.green}🍣 GETTING STARTED WITH SUSHI-FETCH FULL DEMO...${c.reset}`)
 
   await basicExample()
   await cacheExample()
-  await revalidateExample()
-  await retryExample()
-  await timeoutExample()
-  await hooksExample()
   await dedupExample()
-  await cacheControlExample()
+  await reactivityExample()
+  await retryAndTimeoutExample()
+  await cacheTagsExample()
 
-  console.log("\n🎉 ALL DEMOS DONE")
+  console.log(`\n${c.green}🎉 ALL FEATURES WORK PERFECTLY!${c.reset}\n`)
 }
 
 runAll()

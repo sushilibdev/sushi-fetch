@@ -1,210 +1,220 @@
-# 🍣 sushi-fetch
+<div align="center">
+  <h1>🍣 sushi-fetch</h1>
+  <p><strong>Data fetching should be simple, fast, and delicious.</strong></p>
+  <p>A tiny, zero-dependency, and highly-optimized data-fetching & caching library for modern JavaScript and TypeScript apps.</p>
 
-> **Simple, fast, and powerful data fetching with built-in caching,
-> deduplication, and retry --- for modern JavaScript.**
+  <p>
+    <a href="https://www.npmjs.com/package/sushi-fetch"><img src="https://img.shields.io/npm/v/sushi-fetch?color=33cd56&logo=npm" alt="NPM Version" /></a>
+    <a href="https://www.npmjs.com/package/sushi-fetch"><img src="https://img.shields.io/npm/dm/sushi-fetch?color=blue" alt="NPM Downloads" /></a>
+    <a href="https://bundlephobia.com/package/sushi-fetch"><img src="https://img.shields.io/bundlephobia/minzip/sushi-fetch?color=success&label=size" alt="Bundle Size" /></a>
+    <img src="https://img.shields.io/node/v/sushi-fetch" alt="Node Version" />
+    <img src="https://img.shields.io/badge/TypeScript-Ready-blue?logo=typescript" alt="TypeScript" />
+    <img src="https://img.shields.io/badge/dependencies-0-brightgreen" alt="Zero Dependencies" />
+  </p>
+</div>
 
-![npm](https://img.shields.io/npm/v/sushi-fetch)
-![downloads](https://img.shields.io/npm/dm/sushi-fetch)
-![license](https://img.shields.io/npm/l/sushi-fetch)
-![typescript](https://img.shields.io/badge/types-TypeScript-blue)
-![bundle](https://img.shields.io/bundlephobia/min/sushi-fetch)
-![node](https://img.shields.io/node/v/sushi-fetch)
-![stars](https://img.shields.io/github/stars/sushilibdev/sushi-fetch?style=social)
+---
 
-------------------------------------------------------------------------
+## 🤔 Why sushi-fetch?
 
-## ✨ Features
+Most HTTP clients give you only the basics. You still end up writing your own wrappers for caching, retries, and request deduplication. **sushi-fetch** is designed to solve that out-of-the-box without bloating your bundle size.
 
--   ⚡ Fast & Lightweight
--   📦 Built-in Cache (TTL support)
--   🔁 Request Deduplication
--   🔄 Retry System (fixed & exponential)
--   ⏱️ Timeout Control
--   ♻️ Stale-While-Revalidate support
--   🎯 Fully Typed with TypeScript
--   🧠 Smart & Minimal API
--   🔌 Works in Node.js & modern environments
+Built on top of the native `globalThis.fetch`, it provides the intelligence of massive libraries (like SWR or React Query) in a fraction of the size.
 
-------------------------------------------------------------------------
+### ✨ The Superpowers
+* 📦 **Built-in Smart Caching (TTL + LRU):** Responses are automatically cached and reused.
+* ⚡ **Stale-While-Revalidate (SWR):** Instant UI updates with background revalidation.
+* 🔁 **Request Deduplication:** Prevents "Cache Stampedes". 100 identical parallel requests will result in exactly **1** network call.
+* 📡 **Reactivity (Pub/Sub):** Subscribe to cache keys and mutate data for Optimistic Updates.
+* 🏷️ **Cache Tagging:** Group related requests and invalidate them instantly by tag.
+* 🔄 **Smart Retries:** Handle flaky networks gracefully with fixed or exponential backoff strategies.
+* 🔌 **Global Middleware:** Intercept requests, responses, and errors globally.
+* 🪶 **Zero Dependencies:** Pure, modern JavaScript.
+
+---
 
 ## 📦 Installation
 
-``` bash
+```bash
 npm install sushi-fetch
 ```
 
-or
+Also works perfectly with `yarn`, `pnpm`, and `bun`.
 
-``` bash
-yarn add sushi-fetch
-```
-
-------------------------------------------------------------------------
+---
 
 ## 🚀 Quick Start
 
-``` ts
+**1. Basic Fetch & Cache (Node / Vanilla JS)**
+
+```ts 
 import { sushiFetch } from "sushi-fetch"
 
-const users = await sushiFetch("https://jsonplaceholder.typicode.com/users", {
-  cache: true,
-  ttl: 10000,
+// First request: Hits the network
+const users = await sushiFetch("[https://api.example.com/users](https://api.example.com/users)", {
+  ttl: 60000, // Cache for 60 seconds
   retries: 2
 })
 
-console.log(users)
+// Second request (immediately after): INSTANT (0-1ms) from memory!
+const cachedUsers = await sushiFetch("[https://api.example.com/users](https://api.example.com/users)")
 ```
 
-------------------------------------------------------------------------
+**2. React Integration (Reactivity & Hooks)**
 
-## ⚙️ API
+sushi-fetch exposes a powerful `subscribe` and `mutate` API, making it trivial to create reactive components.
 
-### sushiFetch(url, options?)
+```ts
+import { useEffect, useState } from "react"
+import { sushiFetch, sushiCache } from "sushi-fetch"
 
-Fetch data with powerful built-in features.
+export function useSushi<T>(url: string) {
+  const [data, setData] = useState<T | null>(() => sushiCache.get(url))
 
-#### Parameters
+  useEffect(() => {
+    // 1. Fetch and revalidate in background
+    sushiFetch<T>(url, { revalidate: true })
 
-  --------------------------------------------------------------------------
-  Name            Type         Default           Description
-  --------------- ------------ ----------------- ---------------------------
-  url             string       ---               API endpoint
+    // 2. Subscribe to cache mutations
+    const unsubscribe = sushiCache.subscribe<T>(url, setData)
+    return () => unsubscribe()
+  }, [url])
 
-  cache           boolean      true              Enable caching
+  return { data }
+}
 
-  ttl             number       5000              Cache lifetime (ms)
+// In your component:
+// Mutate cache directly for Optimistic Updates!
+// sushiCache.mutate("/api/users", [...newData])
+```
 
-  revalidate      boolean      false             Return cached data &
-                                                 revalidate in background
+**3. Request Deduplication**
 
-  timeout         number       ---               Request timeout in ms
+Stop spamming your servers. sushi-fetch automatically groups identical requests made at the exact same time.
 
-  retries         number       0                 Retry attempts
+```ts
+// Only ONE network request is actually sent to the server.
+await Promise.all([
+  sushiFetch("[https://api.example.com/data](https://api.example.com/data)"),
+  sushiFetch("[https://api.example.com/data](https://api.example.com/data)"),
+  sushiFetch("[https://api.example.com/data](https://api.example.com/data)"),
+])
+```
 
-  retryDelay      number       500               Delay between retries
+**4. Cache Tags & Invalidation**
 
-  retryStrategy   "fixed"      "exponential"     Retry strategy
+Easily manage complex caches by grouping them with tags.
 
-  parseJson       boolean      true              Parse response as JSON
+```ts
+import { sushiFetch, sushiCache } from "sushi-fetch"
 
-  onSuccess       (data) =\>   ---               Success callback
-                  void                           
+// Assign tags during fetch
+await sushiFetch("/api/posts/1", { cacheTags: ["posts-group"] })
+await sushiFetch("/api/posts/2", { cacheTags: ["posts-group"] })
 
-  onError         (error) =\>  ---               Error callback
-                  void                           
+// Later, invalidate all posts instantly:
+sushiCache.invalidateTag("posts-group")
+```
 
-  cacheKey        string       auto              Custom cache key
-  --------------------------------------------------------------------------
+**5. Global Middleware**
 
-------------------------------------------------------------------------
+Log requests, add auth headers, or handle errors globally.
 
-## 🧠 Caching Example
+```ts
+import { addSushiMiddleware } from "sushi-fetch"
 
-``` ts
-await sushiFetch("/api/data", {
-  cache: true,
-  ttl: 10000
+addSushiMiddleware({
+  onRequest: (ctx) => {
+    ctx.options.headers = { ...ctx.options.headers, Authorization: "Bearer token" }
+  },
+  onResponse: (res) => console.log(`✅ Success: ${res.status}`),
+  onError: (err) => console.error(`❌ Fetch failed:`, err),
 })
 ```
 
-------------------------------------------------------------------------
+---
 
-## ♻️ Stale-While-Revalidate
+## ⚙️ API Reference
 
-``` ts
-await sushiFetch("/api/data", {
-  cache: true,
-  revalidate: true
-})
-```
+`sushiFetch(url, options?)`
 
-------------------------------------------------------------------------
+| Option | Type | Default | Description |
+| ---------- | ---------- | ---------- | ---------- | 
+| `cache` | `boolean` | `true` | Enable/disable cache entirely |
+| `ttl` | `number` | `5000` | Cache lifetime (in milliseconds) |
+| `revalidate` | `boolean` | `false` | Return cached data instantly, but refresh in background |
+| `timeout` | `number` | `-` | Request timeout (aborts if exceeded) |
+| `retries` | `number` | `0` | Number of retry attempts on failure |
+| `retryDelay` | `number` | `500` | Delay between retries (in ms) |
+| `retryStrategy` | `"fixed" | "exponential"` | `"exponential"` | Backoff algorithm for retries |
+| `cacheTags` | `string[]` | `[]` | Tags for grouped cache invalidation |
+| `transform` | `(data) => any` | `-` | Format data before caching it |
+| `onSuccess` | `(data) => void` | `-` | Hook triggered on successful fetch |
+| `onError` | `(error) => void` | `-` | Hook triggered on failed fetch |
 
-## 🔁 Retry Example
+**`sushiCache` Utilities**
 
-``` ts
-await sushiFetch("/api/data", {
-  retries: 3,
-  retryStrategy: "exponential",
-  retryDelay: 500
-})
-```
-
-------------------------------------------------------------------------
-
-## ⏱️ Timeout Example
-
-``` ts
-await sushiFetch("/api/data", {
-  timeout: 3000
-})
-```
-
-------------------------------------------------------------------------
-
-## 📦 Cache Utilities
-
-``` ts
-import { sushiCache } from "sushi-fetch"
-
+```ts
+sushiCache.get(key)
+sushiCache.set(key, data, ttl?)
 sushiCache.has(key)
 sushiCache.delete(key)
 sushiCache.clear()
+
+// Pub/Sub & Mutate
+sushiCache.subscribe(key, listener)
+sushiCache.mutate(key, mutatorData)
+sushiCache.invalidateTag(tag)
 ```
 
-------------------------------------------------------------------------
+---
 
-## 🧩 Advanced Example
+## 🆚 Comparison
 
-``` ts
-const data = await sushiFetch("https://api.example.com/posts", {
-  cache: true,
-  ttl: 60000,
-  retries: 2,
-  timeout: 5000,
-  revalidate: true,
-  onSuccess: (data) => console.log("Success:", data),
-  onError: (err) => console.error("Error:", err)
-})
-```
+| Features | sushi-fetch | axios | swr |
+| Zero Dependencies | ✅ | ❌ | ❌ |
+| Built-in cache | ✅ | ❌ | ✅ |
+| Request deduplication | ✅ | ❌ | ✅ |
+| Retry & Timeout system | ✅ | ✅ | ❌ |
+| Pub/Sub Reactivity | ✅ | ❌ | ✅ |
+| Cache tags | ✅ | ❌ | ❌ |
+| Bundle size | ~5kb | ~30kb | ~15kb |
 
-------------------------------------------------------------------------
+<div align="center">
+  <p>While tools like Axios have a mature ecosystem, **sushi-fetch** focuses on giving you the modern SWR-like caching and fetching experience in a drastically smaller, zero-dependency package.</p>
+<div>
 
-## 🛠️ Roadmap
+---
 
--   AbortController support
--   Middleware / interceptor system
--   Polling / auto re-fetch
--   React hooks (useSushiFetch)
--   Devtools debugging mode
--   SSR utilities
+## 🛣 Roadmap
 
-------------------------------------------------------------------------
+- [x] Global Middleware system
+- [x] Reactivity (Pub/Sub & Mutate)
+- [x] Cache tagging
+- [ ] Built-in React Hooks package (`@sushi-fetch/react`)
+- [ ] Polling / Auto referch interval
+- [ ] Devtools extensions
+
+---
 
 ## 🤝 Contributing
 
-Contributions, issues, and feature requests are welcome!
+Pull requests, issues, and feature ideas are highly welcome!
 
-Feel free to open a PR or issue 💛
+If you like this project, consider:
 
-------------------------------------------------------------------------
+- ⭐ Starring the repo
+- 🍣 Sharing it with your team
+- 🐛 Reporting bugs
+
+---
+
+## 💖 Sponsors
+
+I’m building this project independently. If `sushi-fetch` saves you time and headache, consider supporting its development ❤️ Every bit of support helps keep the project alive and brewing new features!
+
+---
 
 ## 📄 License
 
-MIT © 2026 --- Sushi-Fetch Project
-
-------------------------------------------------------------------------
-
-## 🌟 Support
-
-If you like this project:
-
--   ⭐ Star this repo
--   🍣 Share it with others
--   🐛 Report bugs & ideas
-
-------------------------------------------------------------------------
-
-# 🔥 Tagline
-
-> sushi-fetch --- fetching data should be simple, fast, and delicious 🍣
+MIT © 2026 — sushilibdev
