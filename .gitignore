@@ -1,5 +1,6 @@
 # dependencies
 node_modules
+.npmrc
 
 # build output
 dist
@@ -36,4 +37,4 @@ coverage
 Thumbs.db
 
 # TypeScript
-*.tsbuildinfo
+*.tsbuildinfo.npmrc
