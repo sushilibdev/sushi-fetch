@@ -169,23 +169,6 @@ sushiCache.invalidateTag(tag)
 
 ---
 
-## 🆚 Comparison
-
-| Features | sushi-fetch | axios | swr |
-| Zero Dependencies | ✅ | ❌ | ❌ |
-| Built-in cache | ✅ | ❌ | ✅ |
-| Request deduplication | ✅ | ❌ | ✅ |
-| Retry & Timeout system | ✅ | ✅ | ❌ |
-| Pub/Sub Reactivity | ✅ | ❌ | ✅ |
-| Cache tags | ✅ | ❌ | ❌ |
-| Bundle size | ~5kb | ~30kb | ~15kb |
-
-<div align="center">
-  <p>While tools like Axios have a mature ecosystem, **sushi-fetch** focuses on giving you the modern SWR-like caching and fetching experience in a drastically smaller, zero-dependency package.</p>
-<div>
-
----
-
 ## 🛣 Roadmap
 
 - [x] Global Middleware system
