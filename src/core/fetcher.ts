@@ -8,9 +8,6 @@ const cache = new SushiCache()
 const pendingRequests = new Map<string, Promise<unknown>>()
 const revalidateLocks = new Set<string>()
 
-// 💡 OPTIMASI: Map khusus untuk tag yang jauh lebih hemat memori dan cepat
-const tagMap = new Map<string, Set<string>>()
-
 const DEFAULT_TTL = 5000
 const __DEV__ = process.env.NODE_ENV !== "production"
 
@@ -80,16 +77,35 @@ export function addMiddleware(mw: Middleware) {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-function buildAbortController(timeout?: number) {
-  if (!timeout) return null
-
+/**
+ * 💡 FIX: Mencegah Memory Leak dengan mengembalikan fungsi cleanup
+ * dan mendukung penggabungan signal (Signal Merging)
+ */
+function createAbortSignal(timeout?: number, userSignal?: AbortSignal | null) {
   const controller = new AbortController()
-  const id = setTimeout(() => controller.abort(), timeout)
+  
+  let timeoutId: any = null
+  if (timeout) {
+    timeoutId = setTimeout(() => controller.abort(), timeout)
+  }
 
-  // Bersihkan timeout jika abort dipanggil dari tempat lain
-  controller.signal.addEventListener("abort", () => clearTimeout(id))
+  const onAbort = () => {
+    if (timeoutId) clearTimeout(timeoutId)
+    controller.abort()
+  }
 
-  return controller
+  if (userSignal) {
+    if (userSignal.aborted) onAbort()
+    else userSignal.addEventListener("abort", onAbort)
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      if (timeoutId) clearTimeout(timeoutId)
+      if (userSignal) userSignal.removeEventListener("abort", onAbort)
+    }
+  }
 }
 
 function computeBackoff(
@@ -107,21 +123,30 @@ function computeBackoff(
 
 function stableStringify(obj: any): string {
   if (!obj) return ""
-  return JSON.stringify(
-    Object.keys(obj)
-      .sort()
-      .reduce((acc: any, key) => {
-        acc[key] = obj[key]
-        return acc
-      }, {})
-  )
+  try {
+    return JSON.stringify(
+      Object.keys(obj)
+        .sort()
+        .reduce((acc: any, key) => {
+          acc[key] = obj[key]
+          return acc
+        }, {})
+    )
+  } catch {
+    return String(obj)
+  }
 }
 
 function buildCacheKey(url: string, options: RequestInit): string {
+  let headersObj = options.headers || {}
+  if (typeof Headers !== "undefined" && headersObj instanceof Headers) {
+    headersObj = Object.fromEntries(headersObj.entries())
+  }
+
   return `${url}::${stableStringify({
-    method: options.method || "GET",
-    body: options.body,
-    headers: options.headers,
+    method: (options.method || "GET").toUpperCase(),
+    body: options.body instanceof FormData ? "[FormData]" : options.body,
+    headers: headersObj,
   })}`
 }
 
@@ -142,8 +167,8 @@ async function retryFetch<T>(
     try {
       return await fn()
     } catch (err: any) {
-      // 💡 OPTIMASI: Default retry yang pintar. Hanya retry kalau masalah jaringan atau Server Error (5xx)
-      const isNetworkError = !err.status // Biasanya error dari fetch() native kalau putus koneksi
+      // 💡 OPTIMASI: Hanya retry jika masalah jaringan atau Server Error (5xx)
+      const isNetworkError = err.name === "TypeError" || err.name === "AbortError" || !err.status
       const isServerError = err.status >= 500
       
       const shouldRetry = retryOn 
@@ -152,7 +177,7 @@ async function retryFetch<T>(
 
       if (attempt >= retries || !shouldRetry) throw err
 
-      debug(`Retry attempt ${attempt + 1}/${retries} for failing request...`)
+      debug(`Retry attempt ${attempt + 1}/${retries} due to ${err.message}...`)
       await sleep(computeBackoff(attempt, delay, strategy))
       attempt++
     }
@@ -173,13 +198,10 @@ async function runMiddleware(
   for (const mw of stack) {
     try {
       if (type === "onRequest" && mw.onRequest) {
-        // Aman! TypeScript tahu pasti ini fungsi onRequest (1 argumen)
         await mw.onRequest(ctx)
       } else if (type === "onResponse" && mw.onResponse) {
-        // Aman! TypeScript tahu pasti ini fungsi onResponse (2 argumen)
         await mw.onResponse(resOrErr as Response, ctx)
       } else if (type === "onError" && mw.onError) {
-        // Aman! TypeScript tahu pasti ini fungsi onError (2 argumen)
         await mw.onError(resOrErr, ctx)
       }
     } catch (e) {
@@ -202,9 +224,9 @@ export async function fetcher<T = unknown>(
     timeout,
     revalidate = false,
     force = false,
-    retries = 0,
+    retries = 3,
     retryDelay = 500,
-    retryStrategy = "fixed",
+    retryStrategy = "exponential",
     retryOn,
     cacheKey,
     cacheTags = [],
@@ -228,7 +250,6 @@ export async function fetcher<T = unknown>(
 
       if (revalidate && !revalidateLocks.has(key)) {
         revalidateLocks.add(key)
-        // Background revalidation
         fetcher(url, { ...options, revalidate: false, force: true })
           .finally(() => revalidateLocks.delete(key))
           .catch(() => debug("Background revalidation failed for", key))
@@ -246,71 +267,68 @@ export async function fetcher<T = unknown>(
 
   debug("Fetching:", url)
 
-  /* ========== REQUEST ========== */
-  const requestPromise = retryFetch(
-    async () => {
-      await runMiddleware("onRequest", ctx)
+  /* ========== REQUEST CORE (WITH RETRY) ========== */
+  const requestPromise = (async () => {
+    try {
+      const response = await retryFetch(
+        async () => {
+          await runMiddleware("onRequest", ctx)
+          
+          const { signal, cleanup } = createAbortSignal(timeout, fetchOptions.signal)
+          
+          try {
+            const res = await globalThis.fetch(url, {
+              ...fetchOptions,
+              signal,
+            })
 
-      const controller = buildAbortController(timeout)
-      
-      // 💡 OPTIMASI: Menggunakan globalThis.fetch bawaan (tidak perlu node-fetch)
-      const res = await globalThis.fetch(url, {
-        ...fetchOptions,
-        signal: controller?.signal,
-      })
+            if (!validateStatus(res.status)) {
+              const error: any = new Error(`HTTP Error ${res.status}`)
+              error.status = res.status
+              error.response = res
+              throw error
+            }
 
-      await runMiddleware("onResponse", ctx, res)
+            return res
+          } finally {
+            cleanup()
+          }
+        },
+        retries,
+        retryDelay,
+        retryStrategy,
+        retryOn
+      )
 
-      if (!validateStatus(res.status)) {
-        const error: any = new Error(`HTTP Error ${res.status}`)
-        error.status = res.status
-        error.response = res
-        throw error
-      }
+      /* ========== POST-PROCESSING (NO RETRY) ========== */
+      await runMiddleware("onResponse", ctx, response)
 
       let data: unknown
-
       if (parser) {
-        data = await parser(res)
+        data = await parser(response)
       } else if (parseJson) {
-        // Cek header untuk memastikan ini JSON sebelum di-parse
-        const contentType = res.headers.get("content-type")
-        if (contentType && contentType.includes("application/json")) {
-          data = await res.json()
+        const contentType = response.headers.get("content-type") || ""
+        if (contentType.includes("application/json") || contentType.includes("+json")) {
+          data = await response.json()
         } else {
-          data = await res.text()
+          data = await response.text()
         }
       } else {
-        data = await res.text()
+        data = await response.text()
       }
 
       if (transform) data = transform(data)
 
       if (useCache) {
-        cache.set(key, data, ttl)
-
-        // 💡 OPTIMASI: Simpan relasi tag -> keys dengan Set (Sangat efisien)
-        for (const tag of cacheTags) {
-          if (!tagMap.has(tag)) {
-            tagMap.set(tag, new Set())
-          }
-          tagMap.get(tag)!.add(key)
-        }
+        cache.set(key, data, { ttl, tags: cacheTags })
       }
 
       onSuccess?.(data)
       return data as T
-    },
-    retries,
-    retryDelay,
-    retryStrategy,
-    retryOn
-  )
-    .catch(async (err) => {
+    } catch (err) {
       await runMiddleware("onError", ctx, err)
       onError?.(err)
       
-      // STALE-IF-ERROR: Kalau fetch gagal, cek apakah ada data basi di cache yang bisa dipakai
       const staleData = cache.peek<T>(key)
       if (staleData !== null) {
         debug("Returning stale data due to fetch error:", key)
@@ -318,10 +336,10 @@ export async function fetcher<T = unknown>(
       }
       
       throw err
-    })
-    .finally(() => {
+    } finally {
       pendingRequests.delete(key)
-    })
+    }
+  })()
 
   pendingRequests.set(key, requestPromise)
 
@@ -333,29 +351,14 @@ export async function fetcher<T = unknown>(
 /* ============================= */
 
 export const sushiCache = {
-  clear: () => {
-    cache.clear()
-    tagMap.clear()
-  },
+  clear: () => cache.clear(),
   delete: (key: string) => cache.delete(key),
   has: (key: string) => cache.has(key),
-
-  // 👇 TAMBAHAN BARU: Expose fitur Pub/Sub & Mutasi dari cache.ts ke publik!
-  set: <T>(key: string, data: T, ttl?: number) => cache.set(key, data, ttl),
+  set: <T>(key: string, data: T, ttlOrOptions?: number | { ttl?: number; tags?: string[] }) => cache.set(key, data, ttlOrOptions),
   get: <T>(key: string) => cache.get<T>(key),
   mutate: <T>(key: string, mutator: T | ((oldData: T | null) => T), ttl?: number) => cache.mutate(key, mutator, ttl),
   subscribe: <T>(key: string, listener: (data: T | null) => void) => cache.subscribe(key, listener),
-
-  invalidateTag: (tag: string) => {
-    const keys = tagMap.get(tag)
-    if (keys) {
-      for (const key of keys) {
-        cache.delete(key)
-      }
-      tagMap.delete(tag)
-      debug(`Invalidated tag: ${tag} (${keys.size} items)`)
-    }
-  },
+  invalidateTag: (tag: string) => cache.invalidateTag(tag),
 }
 
 /* ============================= */

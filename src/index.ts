@@ -32,27 +32,13 @@ export type {
   FetchOptions,
 } from "./core/fetcher.js"
 
-// 💡 Catatan: Pastikan kamu menambahkan kata 'export' di depan `type CacheOptions` 
-// di dalam file cache.ts jika ingin mengekspornya di sini.
 export type {
-  CacheListener // 💡 Diekspor agar user bisa membuat custom hooks/langganan cache
+  CacheListener,
+  CacheOptions
 } from "./core/cache.js"
-
-// ==============================
-// FUTURE EXTENSIONS (placeholder)
-// ==============================
-
-/**
- * Example for future:
- *
- * export { createClient } from "./client"
- * export { createStore } from "./store"
- *
- * export type { ClientOptions } from "./client"
- */
 
 // ==============================
 // VERSION
 // ==============================
 
-export const VERSION = "0.1.0"
+export const VERSION = "0.2.0"

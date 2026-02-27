@@ -2,6 +2,7 @@ type CacheEntry<T> = {
   data: T
   expiry: number
   lastAccess: number
+  tags?: string[]
 }
 
 // 💡 FITUR BARU: Listener untuk reaktivitas UI
@@ -17,6 +18,7 @@ export type CacheOptions = {
 
 export class SushiCache {
   private store = new Map<string, CacheEntry<any>>()
+  private tagMap = new Map<string, Set<string>>()
   private pendingFetches = new Map<string, Promise<any>>()
   
   // 💡 FITUR BARU: Menyimpan daftar UI/fungsi yang nungguin update data
@@ -82,18 +84,29 @@ export class SushiCache {
   // CORE MEMORY
   // ========================
 
-  set<T>(key: string, data: T, ttl: number = this.defaultTTL) {
+  set<T>(key: string, data: T, options: number | { ttl?: number; tags?: string[] } = this.defaultTTL) {
     const now = Date.now()
+    const ttl = typeof options === 'number' ? options : (options.ttl ?? this.defaultTTL)
+    const tags = typeof options === 'number' ? [] : (options.tags ?? [])
 
     if (this.store.has(key)) {
-      this.store.delete(key)
+      this.delete(key) // Bersihkan metadata lama termasuk tags
     }
 
     this.store.set(key, {
       data,
       expiry: now + ttl,
       lastAccess: now,
+      tags
     })
+
+    // Update Tag Map
+    for (const tag of tags) {
+      if (!this.tagMap.has(tag)) {
+        this.tagMap.set(tag, new Set())
+      }
+      this.tagMap.get(tag)!.add(key)
+    }
 
     this.evictIfNeeded()
     
@@ -152,6 +165,17 @@ export class SushiCache {
     const entry = this.store.get(key)
 
     if (entry) {
+      // Bersihkan Tag Map agar tidak bocor memori
+      if (entry.tags) {
+        for (const tag of entry.tags) {
+          const keys = this.tagMap.get(tag)
+          if (keys) {
+            keys.delete(key)
+            if (keys.size === 0) this.tagMap.delete(tag)
+          }
+        }
+      }
+
       if (this.onEvict) this.onEvict(key, entry.data)
       this.store.delete(key)
       this.notify(key, null) // Kasih tahu UI kalau datanya hilang
@@ -163,12 +187,22 @@ export class SushiCache {
    */
   mutate<T>(key: string, mutator: T | ((oldData: T | null) => T), ttl: number = this.defaultTTL) {
     const oldData = this.get<T>(key)
+    const entry = this.store.get(key)
     const newData = typeof mutator === 'function' 
       ? (mutator as Function)(oldData) 
       : mutator
 
-    this.set(key, newData, ttl)
+    this.set(key, newData, { ttl, tags: entry?.tags })
     return newData
+  }
+
+  invalidateTag(tag: string) {
+    const keys = this.tagMap.get(tag)
+    if (keys) {
+      // Array.from agar aman saat delete item di tengah loop
+      Array.from(keys).forEach(key => this.delete(key))
+      this.tagMap.delete(tag)
+    }
   }
 
   clear() {
@@ -178,6 +212,7 @@ export class SushiCache {
       }
     }
     this.store.clear()
+    this.tagMap.clear()
     
     // Beritahu semua subscriber bahwa data mereka hangus
     for (const key of this.listeners.keys()) {
