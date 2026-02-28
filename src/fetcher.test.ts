@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { createSushi, sushiFetch } from './fetcher'
+import { createSushi, sushiFetch } from './core/fetcher'
 
 // Mock globalThis.fetch
 globalThis.fetch = vi.fn() as any
