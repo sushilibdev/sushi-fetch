@@ -12,8 +12,10 @@
 export {
   fetcher,
   sushiFetch,
+  sushiFetch as sushi, // alias agar bisa dipanggil sushi.create()
+  createSushi,
   sushiCache,
-  addSushiMiddleware // 💡 Ditambahkan agar user bisa pasang middleware global
+  addSushiMiddleware
 } from "./core/fetcher.js"
 
 // ==============================
@@ -30,6 +32,7 @@ export {
 
 export type {
   FetchOptions,
+  SushiError,
 } from "./core/fetcher.js"
 
 export type {
@@ -41,4 +44,6 @@ export type {
 // VERSION
 // ==============================
 
-export const VERSION = "0.2.0"
+export const VERSION = "0.4.0"
+
+export { sushiFetch as default } from "./core/fetcher.js"

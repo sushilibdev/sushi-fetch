@@ -95,12 +95,16 @@ async function retryAndTimeoutExample() {
   }
 
   try {
-    console.log(`  ${c.dim}Trying to fetch with 10ms timeout...${c.reset}`)
+    console.log(`  ${c.dim}Trying to fetch with 1ms timeout...${c.reset}`)
     await sushiFetch("https://jsonplaceholder.typicode.com/photos", {
-      timeout: 10,
+      timeout: 1,
     })
   } catch (err: any) {
-    console.log(`  ⏰ Timeout successfully triggered! (${err.name || "AbortError"})`)
+    if (err.reason === 'timeout') {
+      console.log(`  ⏰ Timeout successfully triggered! (Reason: ${err.reason}, Time: ${err.elapsedTime}ms)`)
+    } else {
+      console.log(`  ⏰ Aborted by user or other error: ${err.name}`)
+    }
   }
 }
 

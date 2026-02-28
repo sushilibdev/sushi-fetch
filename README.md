@@ -45,7 +45,54 @@ Also works perfectly with `yarn`, `pnpm`, and `bun`.
 
 ## 🚀 Quick Start
 
-**1. Basic Fetch & Cache (Node / Vanilla JS)**
+**1. Global Configuration (Instances)**
+
+Create pre-configured fetch instances for different APIs.
+
+```ts
+import { sushi } from "sushi-fetch"
+
+// Create a configured instance
+const api = sushi.create({
+  json: true,
+  token: "my-secret-token",
+  headers: {
+    "X-Custom-Header": "value"
+  }
+})
+
+// Use it easily
+const data = await api("https://api.example.com/users") 
+```
+
+**2. Header Shortcuts**
+
+Stop repeating boilerplate headers.
+
+```ts
+await sushiFetch("/api/data", {
+  json: true, // Auto sets 'Content-Type': 'application/json'
+  token: "your-jwt-token" // Auto sets 'Authorization': 'Bearer your-jwt-token'
+})
+
+// NOTE: Manual headers in the 'headers' object will ALWAYS override shortcuts.
+```
+
+**3. Detailed Timeout Errors**
+
+Catch timeouts with precise metrics.
+
+```ts
+try {
+  await sushiFetch("/slow-endpoint", { timeout: 1000 })
+} catch (err) {
+  if (err.reason === 'timeout') {
+    console.log(`Timed out after ${err.elapsedTime}ms`)
+  }
+}
+```
+
+**4. Basic Fetch & Cache (Node / Vanilla JS)**
 
 ```ts 
 import { sushiFetch } from "sushi-fetch"
@@ -60,7 +107,7 @@ const users = await sushiFetch("[https://api.example.com/users](https://api.exam
 const cachedUsers = await sushiFetch("[https://api.example.com/users](https://api.example.com/users)")
 ```
 
-**2. React Integration (Reactivity & Hooks)**
+**4. React Integration (Reactivity & Hooks)**
 
 sushi-fetch exposes a powerful `subscribe` and `mutate` API, making it trivial to create reactive components.
 
@@ -88,7 +135,7 @@ export function useSushi<T>(url: string) {
 // sushiCache.mutate("/api/users", [...newData])
 ```
 
-**3. Request Deduplication**
+**5. Request Deduplication**
 
 Stop spamming your servers. sushi-fetch automatically groups identical requests made at the exact same time.
 
@@ -101,7 +148,7 @@ await Promise.all([
 ])
 ```
 
-**4. Cache Tags & Invalidation**
+**6. Cache Tags & Invalidation**
 
 Easily manage complex caches by grouping them with tags.
 
@@ -116,7 +163,7 @@ await sushiFetch("/api/posts/2", { cacheTags: ["posts-group"] })
 sushiCache.invalidateTag("posts-group")
 ```
 
-**5. Global Middleware**
+**7. Global Middleware**
 
 Log requests, add auth headers, or handle errors globally.
 

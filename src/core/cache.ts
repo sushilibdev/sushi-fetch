@@ -89,8 +89,18 @@ export class SushiCache {
     const ttl = typeof options === 'number' ? options : (options.ttl ?? this.defaultTTL)
     const tags = typeof options === 'number' ? [] : (options.tags ?? [])
 
-    if (this.store.has(key)) {
-      this.delete(key) // Bersihkan metadata lama termasuk tags
+    const existingEntry = this.store.get(key)
+    if (existingEntry) {
+      if (existingEntry.tags) {
+        for (const tag of existingEntry.tags) {
+          const keys = this.tagMap.get(tag)
+          if (keys) {
+            keys.delete(key)
+            if (keys.size === 0) this.tagMap.delete(tag)
+          }
+        }
+      }
+      this.store.delete(key)
     }
 
     this.store.set(key, {
