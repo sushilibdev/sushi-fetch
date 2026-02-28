@@ -4,7 +4,7 @@ Ide untuk versi versi selanjutnya.
 2. Data Transformation
 3. Automatic JSON Handling
 4. Request Cancellation
-5. 
+5. Form Serialization
 
 Untuk v0.5.0 kita akan menambahkan fitur Automatic JSON Handling
 
