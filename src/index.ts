@@ -44,6 +44,6 @@ export type {
 // VERSION
 // ==============================
 
-export const VERSION = "0.4.0"
+export const VERSION = "0.5.0"
 
 export { sushiFetch as default } from "./core/fetcher.js"

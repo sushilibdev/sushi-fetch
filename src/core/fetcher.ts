@@ -54,6 +54,7 @@ type Middleware = {
 export type FetchOptions = RequestInit &
   RetryConfig & {
     baseUrl?: string // 💡 FITUR BARU: Global Config untuk Base URL
+    data?: any // 💡 FITUR BARU (v0.5.0): Auto-stringify JSON
     cache?: boolean
     ttl?: number
     timeout?: number
@@ -87,6 +88,13 @@ export function addMiddleware(mw: Middleware) {
 /* ============================= */
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * 💡 Helper v0.5.0: Detect plain objects for JSON stringification
+ */
+function isObject(val: any) {
+  return val !== null && typeof val === "object" && !(val instanceof FormData) && !(val instanceof Blob) && !(val instanceof ArrayBuffer)
+}
 
 /**
  * 💡 FIX: Mencegah Memory Leak dengan mengembalikan fungsi cleanup
@@ -354,22 +362,42 @@ export async function fetcher<T = unknown>(
     cacheKey,
     cacheTags = [],
     json,
+    data: payload,
     token,
     ...restOptions
   } = options
 
-  // 1. Process Headers (Manual headers override shortcuts)
+  // 1. Process Data (Auto Stringify v0.5.0)
   const headers = new Headers(restOptions.headers || {})
+  let body = restOptions.body
+
+  if (payload !== undefined) {
+    if (isObject(payload)) {
+      body = JSON.stringify(payload)
+      if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json")
+    } else {
+      body = payload
+    }
+  } else if (isObject(body)) {
+    // 💡 Support auto-stringify on body as well if it's an object
+    body = JSON.stringify(body)
+    if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json")
+  }
+
+  // Legacy json shortcut (still supported for manual body)
   if (json && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json")
   }
+  
   if (token && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${token}`)
   }
+  
   restOptions.headers = headers
+  restOptions.body = body
 
   const key = cacheKey || buildCacheKey(url, restOptions)
-  const ctx: MiddlewareContext = { url, options: { ...options, headers: restOptions.headers } }
+  const ctx: MiddlewareContext = { url, options: { ...options, headers: restOptions.headers, body: restOptions.body } }
 
   /* ========== CACHE HIT ========== */
   if (!force && useCache) {
@@ -462,10 +490,10 @@ export function createSushi(defaultOptions: FetchOptions = {}) {
 
   // Helper shortcuts (optional but nice)
   sushi.get = <T = unknown>(url: string, opts?: FetchOptions) => sushi<T>(url, { ...opts, method: "GET" })
-  sushi.post = <T = unknown>(url: string, body?: any, opts?: FetchOptions) => 
-    sushi<T>(url, { ...opts, method: "POST", body: body instanceof FormData ? body : JSON.stringify(body), json: !(body instanceof FormData) })
-  sushi.put = <T = unknown>(url: string, body?: any, opts?: FetchOptions) => 
-    sushi<T>(url, { ...opts, method: "PUT", body: body instanceof FormData ? body : JSON.stringify(body), json: !(body instanceof FormData) })
+  sushi.post = <T = unknown>(url: string, data?: any, opts?: FetchOptions) => 
+    sushi<T>(url, { ...opts, method: "POST", data })
+  sushi.put = <T = unknown>(url: string, data?: any, opts?: FetchOptions) => 
+    sushi<T>(url, { ...opts, method: "PUT", data })
   sushi.delete = <T = unknown>(url: string, opts?: FetchOptions) => sushi<T>(url, { ...opts, method: "DELETE" })
 
   return sushi
