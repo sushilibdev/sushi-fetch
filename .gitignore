@@ -15,11 +15,6 @@ pnpm-debug.log*
 .env.local
 .env.*.local
 
-# lock file
-package-lock.json
-pnpm-lock.yaml
-yarn.lock
-
 # coverage
 coverage
 
