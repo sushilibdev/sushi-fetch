@@ -5,7 +5,6 @@ type CacheEntry<T> = {
   tags?: string[]
 }
 
-// 💡 FITUR BARU: Listener untuk reaktivitas UI
 export type CacheListener<T = any> = (data: T | null) => void
 
 export type CacheOptions = {
@@ -17,334 +16,156 @@ export type CacheOptions = {
 }
 
 export class SushiCache {
-  private store = new Map<string, CacheEntry<any>>()
-  private tagMap = new Map<string, Set<string>>()
-  private pendingFetches = new Map<string, Promise<any>>()
-  
-  // 💡 FITUR BARU: Menyimpan daftar UI/fungsi yang nungguin update data
-  private listeners = new Map<string, Set<CacheListener>>()
+  #store = new Map<string, CacheEntry<any>>()
+  #tags = new Map<string, Set<string>>()
+  #fetches = new Map<string, Promise<any>>()
+  #listeners = new Map<string, Set<CacheListener>>()
 
-  private maxSize: number
-  private defaultTTL: number
-  private sliding: boolean
-  private onEvict?: (key: string, value: any) => void
+  #maxSize: number
+  #defaultTTL: number
+  #sliding: boolean
+  #onEvict?: (key: string, value: any) => void
 
-  private hits = 0
-  private misses = 0
-
-  private cleanupTimer?: ReturnType<typeof setInterval>
+  #hits = 0
+  #misses = 0
+  #timer?: any
 
   constructor(options: CacheOptions = {}) {
-    this.maxSize = options.maxSize ?? Infinity
-    this.defaultTTL = options.defaultTTL ?? 5000
-    this.sliding = options.sliding ?? false
-    this.onEvict = options.onEvict
+    this.#maxSize = options.maxSize ?? Infinity
+    this.#defaultTTL = options.defaultTTL ?? 5000
+    this.#sliding = options.sliding ?? false
+    this.#onEvict = options.onEvict
 
     if (options.cleanupInterval) {
-      this.cleanupTimer = setInterval(() => {
-        this.pruneExpired()
-      }, options.cleanupInterval)
-      
-      // Mencegah timer menahan Node.js process dari exit (jika di environment Node)
-      if (typeof this.cleanupTimer.unref === 'function') {
-        this.cleanupTimer.unref()
-      }
+      this.#timer = setInterval(() => this.pruneExpired(), options.cleanupInterval)
+      if (this.#timer.unref) this.#timer.unref()
     }
   }
 
-  // ========================
-  // REACTIVITY (PUB/SUB)
-  // ========================
-
-  /**
-   * Subscribe ke perubahan data di cache. Sangat berguna untuk React/Vue Hooks.
-   * Mengembalikan fungsi untuk unsubscribe.
-   */
   subscribe<T>(key: string, listener: CacheListener<T>): () => void {
-    if (!this.listeners.has(key)) {
-      this.listeners.set(key, new Set())
-    }
-    this.listeners.get(key)!.add(listener as CacheListener)
-
+    if (!this.#listeners.has(key)) this.#listeners.set(key, new Set())
+    this.#listeners.get(key)!.add(listener as CacheListener)
     return () => {
-      this.listeners.get(key)?.delete(listener as CacheListener)
-      if (this.listeners.get(key)?.size === 0) {
-        this.listeners.delete(key)
-      }
+      this.#listeners.get(key)?.delete(listener as CacheListener)
+      if (this.#listeners.get(key)?.size === 0) this.#listeners.delete(key)
     }
   }
 
-  private notify(key: string, data: any | null) {
-    if (this.listeners.has(key)) {
-      this.listeners.get(key)!.forEach((listener) => listener(data))
-    }
+  #notify(key: string, data: any | null) {
+    this.#listeners.get(key)?.forEach((l) => l(data))
   }
 
-  // ========================
-  // CORE MEMORY
-  // ========================
-
-  set<T>(key: string, data: T, options: number | { ttl?: number; tags?: string[] } = this.defaultTTL) {
-    const now = Date.now()
-    const ttl = typeof options === 'number' ? options : (options.ttl ?? this.defaultTTL)
+  set<T>(key: string, data: T, options: number | { ttl?: number; tags?: string[] } = this.#defaultTTL) {
+    const ttl = typeof options === 'number' ? options : (options.ttl ?? this.#defaultTTL)
     const tags = typeof options === 'number' ? [] : (options.tags ?? [])
 
-    const existingEntry = this.store.get(key)
-    if (existingEntry) {
-      if (existingEntry.tags) {
-        for (const tag of existingEntry.tags) {
-          const keys = this.tagMap.get(tag)
-          if (keys) {
-            keys.delete(key)
-            if (keys.size === 0) this.tagMap.delete(tag)
-          }
-        }
-      }
-      this.store.delete(key)
-    }
+    this.delete(key)
 
-    this.store.set(key, {
-      data,
-      expiry: now + ttl,
-      lastAccess: now,
-      tags
+    this.#store.set(key, { data, expiry: Date.now() + ttl, lastAccess: Date.now(), tags })
+
+    tags.forEach(tag => {
+      if (!this.#tags.has(tag)) this.#tags.set(tag, new Set())
+      this.#tags.get(tag)!.add(key)
     })
 
-    // Update Tag Map
-    for (const tag of tags) {
-      if (!this.tagMap.has(tag)) {
-        this.tagMap.set(tag, new Set())
-      }
-      this.tagMap.get(tag)!.add(key)
+    if (this.#store.size > this.#maxSize) {
+      const oldest = this.#store.keys().next().value
+      if (oldest !== undefined) this.delete(oldest)
     }
-
-    this.evictIfNeeded()
-    
-    // 💡 FITUR BARU: Kasih tahu semua subscriber kalau ada data baru!
-    this.notify(key, data)
+    this.#notify(key, data)
   }
 
   get<T>(key: string): T | null {
-    const entry = this.store.get(key)
+    const entry = this.#store.get(key)
+    if (!entry) return (this.#misses++, null)
 
-    if (!entry) {
-      this.misses++
-      return null
-    }
+    if (Date.now() > entry.expiry) return (this.delete(key), this.#misses++, null)
 
-    const now = Date.now()
+    entry.lastAccess = Date.now()
+    if (this.#sliding) entry.expiry = Date.now() + this.#defaultTTL
 
-    if (now > entry.expiry) {
-      this.delete(key)
-      this.misses++
-      return null
-    }
-
-    entry.lastAccess = now
-
-    if (this.sliding) {
-      entry.expiry = now + this.defaultTTL
-    }
-
-    // Refresh LRU order (Pindahkan ke paling belakang/baru)
-    this.store.delete(key)
-    this.store.set(key, entry)
-
-    this.hits++
-    return entry.data as T
+    this.#store.delete(key)
+    this.#store.set(key, entry)
+    return (this.#hits++, entry.data as T)
   }
 
   peek<T>(key: string): T | null {
-    const entry = this.store.get(key)
-    if (!entry) return null
-
-    if (Date.now() > entry.expiry) {
-      // Hapus diam-diam jika expired saat di-peek
-      this.delete(key)
-      return null
-    }
-
-    return entry.data as T
+    const e = this.#store.get(key)
+    return (e && Date.now() > e.expiry) ? (this.delete(key), null) : (e?.data ?? null)
   }
 
-  has(key: string) {
-    return this.peek(key) !== null
-  }
+  has(key: string) { return this.peek(key) !== null }
 
   delete(key: string) {
-    const entry = this.store.get(key)
-
-    if (entry) {
-      // Bersihkan Tag Map agar tidak bocor memori
-      if (entry.tags) {
-        for (const tag of entry.tags) {
-          const keys = this.tagMap.get(tag)
-          if (keys) {
-            keys.delete(key)
-            if (keys.size === 0) this.tagMap.delete(tag)
-          }
-        }
-      }
-
-      if (this.onEvict) this.onEvict(key, entry.data)
-      this.store.delete(key)
-      this.notify(key, null) // Kasih tahu UI kalau datanya hilang
+    const e = this.#store.get(key)
+    if (e) {
+      e.tags?.forEach(t => {
+        const ks = this.#tags.get(t)
+        if (ks) (ks.delete(key), ks.size || this.#tags.delete(t))
+      })
+      this.#onEvict?.(key, e.data)
+      this.#store.delete(key)
+      this.#notify(key, null)
     }
   }
 
-  /**
-   * 💡 FITUR BARU: Mutate data secara manual (Optimistic Updates)
-   */
-  mutate<T>(key: string, mutator: T | ((oldData: T | null) => T), ttl: number = this.defaultTTL) {
-    const oldData = this.get<T>(key)
-    const entry = this.store.get(key)
-    const newData = typeof mutator === 'function' 
-      ? (mutator as Function)(oldData) 
-      : mutator
-
-    this.set(key, newData, { ttl, tags: entry?.tags })
-    return newData
+  mutate<T>(key: string, mutator: T | ((oldData: T | null) => T), ttl = this.#defaultTTL) {
+    const old = this.get<T>(key)
+    const entry = this.#store.get(key)
+    const next = typeof mutator === 'function' ? (mutator as Function)(old) : mutator
+    return (this.set(key, next, { ttl, tags: entry?.tags }), next)
   }
 
   invalidateTag(tag: string) {
-    const keys = this.tagMap.get(tag)
-    if (keys) {
-      // Array.from agar aman saat delete item di tengah loop
-      Array.from(keys).forEach(key => this.delete(key))
-      this.tagMap.delete(tag)
-    }
+    this.#tags.get(tag)?.forEach(k => this.delete(k))
+    this.#tags.delete(tag)
   }
 
   clear() {
-    if (this.onEvict) {
-      for (const [key, entry] of this.store.entries()) {
-        this.onEvict(key, entry.data)
-      }
-    }
-    this.store.clear()
-    this.tagMap.clear()
-    
-    // Beritahu semua subscriber bahwa data mereka hangus
-    for (const key of this.listeners.keys()) {
-      this.notify(key, null)
-    }
+    if (this.#onEvict) this.#store.forEach((e, k) => this.#onEvict!(k, e.data))
+    this.#store.clear()
+    this.#tags.clear()
+    this.#listeners.forEach((_, k) => this.#notify(k, null))
   }
 
-  // ========================
-  // LRU
-  // ========================
-
-  private evictIfNeeded() {
-    while (this.store.size > this.maxSize) {
-      const oldestKey = this.store.keys().next().value
-      if (oldestKey !== undefined) {
-        this.delete(oldestKey)
-      } else {
-        break
-      }
-    }
-  }
-
-  // ========================
-  // ADVANCED FETCH
-  // ========================
-
-  async getOrSet<T>(
-    key: string,
-    fetcher: () => Promise<T>,
-    ttl: number = this.defaultTTL
-  ): Promise<T> {
+  async getOrSet<T>(key: string, fetcher: () => Promise<T>, ttl = this.#defaultTTL): Promise<T> {
     const cached = this.get<T>(key)
     if (cached !== null) return cached
+    if (this.#fetches.has(key)) return this.#fetches.get(key)! as Promise<T>
 
-    // Dedupe fetch (Mencegah Cache Stampede)
-    if (this.pendingFetches.has(key)) {
-      return this.pendingFetches.get(key)! as Promise<T>
-    }
-
-    const fetchPromise = (async () => {
+    const p = (async () => {
       try {
-        const data = await fetcher()
-        this.set(key, data, ttl)
-        return data
-      } finally {
-        this.pendingFetches.delete(key)
-      }
+        const d = await fetcher()
+        return (this.set(key, d, ttl), d)
+      } finally { this.#fetches.delete(key) }
     })()
-
-    this.pendingFetches.set(key, fetchPromise)
-    return fetchPromise
+    return (this.#fetches.set(key, p), p)
   }
 
-  /**
-   * Stale While Revalidate
-   */
-  async getOrSetSWR<T>(
-    key: string,
-    fetcher: () => Promise<T>,
-    ttl: number = this.defaultTTL
-  ): Promise<T> {
-    const entry = this.store.get(key)
-    const now = Date.now()
-
-    if (entry) {
-      const isExpired = now > entry.expiry
-
-      if (!isExpired) {
-        this.hits++
-        return entry.data as T
-      }
-
-      // Expired tapi masih ada (Stale). Kembalikan data basi, tapi revalidate di belakang layar.
-      this.revalidate(key, fetcher, ttl).catch(err => {
-        console.error(`[SushiCache] SWR Background fetch failed for key ${key}:`, err)
-      })
-      
-      return entry.data as T
+  async getOrSetSWR<T>(key: string, f: () => Promise<T>, ttl = this.#defaultTTL): Promise<T> {
+    const e = this.#store.get(key)
+    if (e) {
+      if (Date.now() <= e.expiry) return (this.#hits++, e.data as T)
+      this.#revalidate(key, f, ttl).catch(() => {})
+      return e.data as T
     }
-
-    return this.getOrSet(key, fetcher, ttl)
+    return this.getOrSet(key, f, ttl)
   }
 
-  private async revalidate<T>(
-    key: string,
-    fetcher: () => Promise<T>,
-    ttl: number
-  ): Promise<void> {
-    // Jika sudah ada request berjalan, biarkan getOrSet yang handle
-    if (this.pendingFetches.has(key)) return
-
-    const fetchPromise = fetcher()
-      .then((data) => {
-        this.set(key, data, ttl)
-      })
-      .finally(() => {
-        this.pendingFetches.delete(key)
-      })
-
-    this.pendingFetches.set(key, fetchPromise)
-    return fetchPromise
+  async #revalidate<T>(key: string, f: () => Promise<T>, ttl: number): Promise<void> {
+    if (this.#fetches.has(key)) return
+    const p = f().then(d => this.set(key, d, ttl)).finally(() => this.#fetches.delete(key))
+    this.#fetches.set(key, p)
   }
-
-  // ========================
-  // UTIL
-  // ========================
 
   pruneExpired() {
-    const now = Date.now()
-    for (const [key, entry] of this.store.entries()) {
-      if (now > entry.expiry) {
-        this.delete(key)
-      }
-    }
+    this.#store.forEach((e, k) => Date.now() > e.expiry && this.delete(k))
   }
 
   destroy() {
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer)
-    }
+    if (this.#timer) clearInterval(this.#timer)
     this.clear()
-    this.listeners.clear()
-    this.pendingFetches.clear()
+    this.#listeners.clear()
+    this.#fetches.clear()
   }
 }

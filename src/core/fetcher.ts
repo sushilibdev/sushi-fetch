@@ -1,22 +1,13 @@
 import { SushiCache } from "./cache.js"
 
-/* ============================= */
-/* ========= GLOBALS =========== */
-/* ============================= */
-
 const cache = new SushiCache()
 const pendingRequests = new Map<string, Promise<unknown>>()
 const revalidateLocks = new Set<string>()
 
 const DEFAULT_TTL = 5000
-const __DEV__ = process.env.NODE_ENV !== "production"
-
-/* ============================= */
-/* ========= DEBUG ============= */
-/* ============================= */
 
 function debug(...args: any[]) {
-  if (__DEV__) {
+  if (process.env.NODE_ENV !== "production") {
     console.log("[sushi-fetch]", ...args)
   }
 }
@@ -25,14 +16,14 @@ function debug(...args: any[]) {
 /* ========= TYPES ============= */
 /* ============================= */
 
-type RetryConfig = {
+export type RetryConfig = {
   retries?: number
   retryDelay?: number
   retryStrategy?: "fixed" | "exponential"
   retryOn?: (res: Response | null, err: unknown) => boolean
 }
 
-type MiddlewareContext = {
+export type MiddlewareContext = {
   url: string
   options: FetchOptions
 }
@@ -40,12 +31,12 @@ type MiddlewareContext = {
 export type SushiError = Error & {
   status?: number
   response?: Response
-  data?: any // 💡 FITUR BARU: Menyimpan response body (JSON/text) dari error
+  data?: any
   elapsedTime?: number
   reason?: "timeout" | string
 }
 
-type Middleware = {
+export type Middleware = {
   onRequest?: (ctx: MiddlewareContext) => Promise<void> | void
   onResponse?: (res: Response, ctx: MiddlewareContext) => Promise<void> | void
   onError?: (err: unknown, ctx: MiddlewareContext) => Promise<void> | void
@@ -53,8 +44,8 @@ type Middleware = {
 
 export type FetchOptions = RequestInit &
   RetryConfig & {
-    baseUrl?: string // 💡 FITUR BARU: Global Config untuk Base URL
-    data?: any // 💡 FITUR BARU (v0.5.0): Auto-stringify JSON
+    baseUrl?: string
+    data?: any
     cache?: boolean
     ttl?: number
     timeout?: number
@@ -78,156 +69,71 @@ export type FetchOptions = RequestInit &
 /* ============================= */
 
 const globalMiddleware: Middleware[] = []
-
-export function addMiddleware(mw: Middleware) {
-  globalMiddleware.push(mw)
-}
+export const addMiddleware = (mw: Middleware) => globalMiddleware.push(mw)
 
 /* ============================= */
 /* ========= HELPERS =========== */
 /* ============================= */
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+const isObject = (v: any): v is Record<string, any> => v && typeof v === "object" && !(v instanceof FormData || v instanceof Blob || v instanceof ArrayBuffer)
 
-/**
- * 💡 Helper v0.5.0: Detect plain objects for JSON stringification
- */
-function isObject(val: any) {
-  return val !== null && typeof val === "object" && !(val instanceof FormData) && !(val instanceof Blob) && !(val instanceof ArrayBuffer)
-}
-
-/**
- * 💡 FIX: Mencegah Memory Leak dengan mengembalikan fungsi cleanup
- * dan mendukung penggabungan signal (Signal Merging)
- */
 function createAbortSignal(timeout?: number, userSignal?: AbortSignal | null) {
-  const controller = new AbortController()
-  
-  let timeoutId: any = null
-  let isTimeout = false
-  if (timeout) {
-    timeoutId = setTimeout(() => {
-      isTimeout = true
-      controller.abort()
-    }, timeout)
-  }
+  const ctrl = new AbortController()
+  let tid: any, isT = false
+  if (timeout) tid = setTimeout(() => (isT = true, ctrl.abort()), timeout)
 
-  const onAbort = () => {
-    if (timeoutId) clearTimeout(timeoutId)
-    controller.abort()
-  }
-
-  if (userSignal) {
-    if (userSignal.aborted) onAbort()
-    else userSignal.addEventListener("abort", onAbort)
-  }
+  const onA = () => (tid && clearTimeout(tid), ctrl.abort())
+  if (userSignal) userSignal.aborted ? onA() : userSignal.addEventListener("abort", onA)
 
   return {
-    signal: controller.signal,
-    getIsTimeout: () => isTimeout,
+    signal: ctrl.signal,
+    getIsTimeout: () => isT,
     cleanup: () => {
-      if (timeoutId) clearTimeout(timeoutId)
-      if (userSignal) userSignal.removeEventListener("abort", onAbort)
+      if (tid) clearTimeout(tid)
+      if (userSignal) userSignal.removeEventListener("abort", onA)
     }
   }
-}
-
-function computeBackoff(
-  attempt: number,
-  base: number,
-  strategy: "fixed" | "exponential"
-) {
-  if (strategy === "fixed") return base
-  return base * Math.pow(2, attempt) + Math.random() * 100 // + jitter biar nggak tabrakan
 }
 
 /* ============================= */
 /* ========= KEY BUILDER ======= */
 /* ============================= */
 
-function stableStringify(obj: any): string {
-  if (!obj) return ""
-  try {
-    return JSON.stringify(
-      Object.keys(obj)
-        .sort()
-        .reduce((acc: any, key) => {
-          acc[key] = obj[key]
-          return acc
-        }, {})
-    )
-  } catch {
-    return String(obj)
-  }
-}
-
-function buildCacheKey(url: string, options: RequestInit): string {
-  const headersObj = Object.fromEntries(new Headers(options.headers || {}).entries())
-
-  return `${url}::${stableStringify({
-    method: (options.method || "GET").toUpperCase(),
-    body: options.body instanceof FormData ? "[FormData]" : options.body,
-    headers: headersObj,
-  })}`
+function buildCacheKey(url: string, opts: RequestInit): string {
+  const h = new Headers(opts.headers)
+  const sh = Array.from(h.entries()).sort((a, b) => a[0].localeCompare(b[0]))
+  return `${(opts.method || "GET").toUpperCase()}:${url}:${JSON.stringify(sh)}:${opts.body instanceof FormData ? "[FD]" : (opts.body || "")}`
 }
 
 /* ============================= */
 /* ========= RETRY CORE ======== */
 /* ============================= */
 
-async function retryFetch<T>(
-  fn: () => Promise<T>,
-  retries: number,
-  delay: number,
-  strategy: "fixed" | "exponential",
-  retryOn?: (res: Response | null, err: unknown) => boolean
-): Promise<T> {
-  let attempt = 0
-
-  while (true) {
-    try {
-      return await fn()
-    } catch (err: any) {
-      // 💡 OPTIMASI: Hanya retry jika masalah jaringan atau Server Error (5xx)
-      const isNetworkError = err.name === "TypeError" || err.name === "AbortError" || !err.status
-      const isServerError = err.status >= 500
-      
-      const shouldRetry = retryOn 
-        ? retryOn(err.response || null, err) 
-        : (isNetworkError || isServerError)
-
-      if (attempt >= retries || !shouldRetry) throw err
-
-      debug(`Retry attempt ${attempt + 1}/${retries} due to ${err.message}...`)
-      await sleep(computeBackoff(attempt, delay, strategy))
-      attempt++
+async function retryFetch<T>(fn: () => Promise<T>, r: number, d: number, s: "fixed" | "exponential", ro?: (res: Response | null, err: unknown) => boolean): Promise<T> {
+  let a = 0
+  while (1) {
+    try { return await fn() } catch (e: any) {
+      const isNet = e.name === "TypeError" || e.name === "AbortError" || !e.status
+      if (a >= r || !(ro ? ro(e.response || null, e) : (isNet || e.status >= 500))) throw e
+      debug(`Retry ${++a}/${r}`)
+      await sleep(s === "fixed" ? d : d * Math.pow(2, a - 1) + Math.random() * 100)
     }
   }
+  throw new Error() // Unreachable but needed for TS
 }
 
 /* ============================= */
 /* ========= MIDDLEWARE ======== */
 /* ============================= */
 
-async function runMiddleware(
-  type: keyof Middleware,
-  ctx: MiddlewareContext,
-  resOrErr?: unknown
-) {
+async function runMW(type: keyof Middleware, ctx: MiddlewareContext, arg?: any) {
   const stack = [...globalMiddleware, ...(ctx.options.middleware || [])]
-
   for (const mw of stack) {
     try {
-      if (type === "onRequest" && mw.onRequest) {
-        await mw.onRequest(ctx)
-      } else if (type === "onResponse" && mw.onResponse) {
-        await mw.onResponse(resOrErr as Response, ctx)
-      } else if (type === "onError" && mw.onError) {
-        await mw.onError(resOrErr, ctx)
-      }
-    } catch (e) {
-      debug("Middleware error:", e)
-    }
+      const f = mw[type] as any
+      if (f) await f(type === "onRequest" ? ctx : arg, type === "onRequest" ? undefined : ctx)
+    } catch (e) { debug("MW Err", e) }
   }
 }
 
@@ -235,268 +141,105 @@ async function runMiddleware(
 /* ========= MAIN CORE ========= */
 /* ============================= */
 
-/**
- * 💡 Internal request logic, reusable for different sushi instances
- */
-async function executeRequest<T = unknown>(
-  url: string,
-  options: FetchOptions,
-  ctx: MiddlewareContext
-): Promise<T> {
-  const {
-    timeout,
-    retries = 3,
-    retryDelay = 500,
-    retryStrategy = "exponential",
-    retryOn,
-    parseJson = true,
-    parser,
-    transform,
-    validateStatus = (s) => s >= 200 && s < 300,
-    onSuccess,
-    onError,
-    json: _json,
-    token: _token,
-    ...fetchOptions
-  } = options
-
-  const startTime = Date.now()
+async function executeRequest<T = unknown>(url: string, opts: FetchOptions, ctx: MiddlewareContext): Promise<T> {
+  const { timeout, retries: r = 3, retryDelay: d = 500, retryStrategy: s = "exponential", retryOn: ro, parseJson: pj = true, parser, transform, validateStatus: vs = (s) => s >= 200 && s < 300, onSuccess: ok, onError: fail, ...fOpts } = opts
+  const start = Date.now()
 
   try {
-    const response = await retryFetch(
-      async () => {
-        await runMiddleware("onRequest", ctx)
-        
-        const { signal, getIsTimeout, cleanup } = createAbortSignal(timeout, fetchOptions.signal)
-        
-        try {
-          // 💡 FITUR BARU: Handle Base URL Global
-          let finalUrl = url
-          if (options.baseUrl && !url.startsWith("http://") && !url.startsWith("https://")) {
-             finalUrl = `${options.baseUrl.replace(/\/$/, "")}/${url.replace(/^\//, "")}`
-          }
-
-          const res = await globalThis.fetch(finalUrl, {
-            ...fetchOptions,
-            signal,
-          })
-
-          if (!validateStatus(res.status)) {
-            // 💡 FITUR BARU: Strict Error Handling (Extract API error message)
-            let errorData: any = null
-            try {
-               const clone = res.clone()
-               const contentType = clone.headers.get("content-type") || ""
-               if (contentType.includes("application/json")) {
-                  errorData = await clone.json()
-               } else {
-                  errorData = await clone.text()
-               }
-            } catch (e) {
-               // Ignore JSON parsing errors for empty/invalid body
-            }
-
-            const error: SushiError = new Error(
-              errorData?.message || errorData?.error || `HTTP Error ${res.status}: ${res.statusText}`
-            )
-            error.status = res.status
-            error.response = res
-            error.data = errorData
-            throw error
-          }
-
-          return res
-        } catch (err: any) {
-          if (err.name === "AbortError" && getIsTimeout()) {
-            err.elapsedTime = Date.now() - startTime
-            err.reason = "timeout"
-          }
+    const res = await retryFetch(async () => {
+      await runMW("onRequest", ctx)
+      const { signal, getIsTimeout, cleanup } = createAbortSignal(timeout, fOpts.signal)
+      try {
+        let fUrl = url
+        if (opts.baseUrl && !url.includes("://")) fUrl = `${opts.baseUrl.replace(/\/$/, "")}/${url.replace(/^\//, "")}`
+        const res = await globalThis.fetch(fUrl, { ...fOpts, signal })
+        if (!vs(res.status)) {
+          let ed: any
+          try { const c = res.clone(); ed = (c.headers.get("content-type") || "").includes("json") ? await c.json() : await c.text() } catch {}
+          const err: SushiError = new Error(ed?.message || ed?.error || `HTTP ${res.status}`)
+          Object.assign(err, { status: res.status, response: res, data: ed })
           throw err
-        } finally {
-          cleanup()
         }
-      },
-      retries,
-      retryDelay,
-      retryStrategy,
-      retryOn
-    )
+        return res
+      } catch (e: any) {
+        if (e.name === "AbortError" && getIsTimeout()) Object.assign(e, { elapsedTime: Date.now() - start, reason: "timeout" })
+        throw e
+      } finally { cleanup() }
+    }, r, d, s, ro)
 
-    /* ========== POST-PROCESSING (NO RETRY) ========== */
-    await runMiddleware("onResponse", ctx, response)
-
-    let data: unknown
-    if (parser) {
-      data = await parser(response)
-    } else if (parseJson) {
-      const contentType = response.headers.get("content-type") || ""
-      if (contentType.includes("application/json") || contentType.includes("+json")) {
-        data = await response.json()
-      } else {
-        data = await response.text()
-      }
-    } else {
-      data = await response.text()
-    }
-
+    await runMW("onResponse", ctx, res)
+    let data = parser ? await parser(res) : ((pj && (res.headers.get("content-type") || "").includes("json")) ? await res.json() : await res.text())
     if (transform) data = transform(data)
-
-    onSuccess?.(data)
-    return data as T
-  } catch (err) {
-    await runMiddleware("onError", ctx, err)
-    onError?.(err)
-    throw err
+    ok?.(data)
+    return data
+  } catch (e) {
+    await runMW("onError", ctx, e)
+    fail?.(e)
+    throw e
   }
 }
 
-export async function fetcher<T = unknown>(
-  url: string,
-  options: FetchOptions = {}
-): Promise<T> {
-  const {
-    cache: useCache = true,
-    ttl = DEFAULT_TTL,
-    revalidate = false,
-    force = false,
-    cacheKey,
-    cacheTags = [],
-    json,
-    data: payload,
-    token,
-    ...restOptions
-  } = options
+export async function fetcher<T = unknown>(url: string, opts: FetchOptions = {}): Promise<T> {
+  const { cache: useC = true, ttl = DEFAULT_TTL, revalidate: rv = false, force = false, cacheKey: ck, cacheTags: ct = [], json, data: payload, token, ...rest } = opts
+  const h = new Headers(rest.headers)
+  let b = rest.body
 
-  // 1. Process Data (Auto Stringify v0.5.0)
-  const headers = new Headers(restOptions.headers || {})
-  let body = restOptions.body
-
-  if (payload !== undefined) {
-    if (isObject(payload)) {
-      body = JSON.stringify(payload)
-      if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json")
-    } else {
-      body = payload
-    }
-  } else if (isObject(body)) {
-    // 💡 Support auto-stringify on body as well if it's an object
-    body = JSON.stringify(body)
-    if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json")
+  if (payload !== undefined || isObject(b)) {
+    const d = payload !== undefined ? payload : b
+    if (isObject(d)) { b = JSON.stringify(d); if (!h.has("Content-Type")) h.set("Content-Type", "application/json") } else b = d
   }
-
-  // Legacy json shortcut (still supported for manual body)
-  if (json && !headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json")
-  }
+  if (json && !h.has("Content-Type")) h.set("Content-Type", "application/json")
+  if (token && !h.has("Authorization")) h.set("Authorization", `Bearer ${token}`)
   
-  if (token && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${token}`)
-  }
-  
-  restOptions.headers = headers
-  restOptions.body = body
+  Object.assign(rest, { headers: h, body: b })
+  const key = ck || buildCacheKey(url, rest)
+  const ctx: MiddlewareContext = { url, options: { ...opts, headers: h, body: b } }
 
-  const key = cacheKey || buildCacheKey(url, restOptions)
-  const ctx: MiddlewareContext = { url, options: { ...options, headers: restOptions.headers, body: restOptions.body } }
-
-  /* ========== CACHE HIT ========== */
-  if (!force && useCache) {
-    const cached = cache.get<T>(key)
-    if (cached !== null) {
-      debug("Cache hit:", key)
-
-      if (revalidate && !revalidateLocks.has(key)) {
-        revalidateLocks.add(key)
-        fetcher(url, { ...options, revalidate: false, force: true })
-          .finally(() => revalidateLocks.delete(key))
-          .catch(() => debug("Background revalidation failed for", key))
+  if (!force && useC) {
+    const c = cache.get<T>(key)
+    if (c !== null) {
+      if (rv && !revalidateLocks.has(key)) {
+        revalidateLocks.add(key); fetcher(url, { ...opts, revalidate: false, force: true }).finally(() => revalidateLocks.delete(key)).catch(() => {})
       }
-
-      return cached
+      return c
     }
   }
 
-  /* ========== DEDUP ========== */
-  if (pendingRequests.has(key)) {
-    debug("Dedup hit:", key)
-    return pendingRequests.get(key) as Promise<T>
-  }
+  if (pendingRequests.has(key)) return pendingRequests.get(key) as Promise<T>
 
-  debug("Fetching:", url)
-
-  const requestPromise = (async () => {
+  const p = (async () => {
     try {
-      const data = await executeRequest<T>(url, restOptions as FetchOptions, ctx)
-
-      if (useCache) {
-        cache.set(key, data, { ttl, tags: cacheTags })
-      }
-
-      return data
-    } catch (err) {
-      const staleData = cache.peek<T>(key)
-      if (staleData !== null) {
-        debug("Returning stale data due to fetch error:", key)
-        return staleData
-      }
-      throw err
-    } finally {
-      pendingRequests.delete(key)
-    }
+      const d = await executeRequest<T>(url, rest as FetchOptions, ctx)
+      if (useC) cache.set(key, d, { ttl, tags: ct })
+      return d
+    } catch (e) {
+      const s = cache.peek<T>(key)
+      if (s !== null) return s
+      throw e
+    } finally { pendingRequests.delete(key) }
   })()
 
-  pendingRequests.set(key, requestPromise)
-
-  return requestPromise
+  return (pendingRequests.set(key, p), p)
 }
 
 /* ============================= */
 /* ========= INSTANCE ========== */
 /* ============================= */
 
-function mergeHeaders(h1?: HeadersInit, h2?: HeadersInit): HeadersInit {
-  const res = new Headers(h1 || {})
-  if (h2) {
-    new Headers(h2).forEach((v, k) => res.set(k, v))
-  }
-  return res
+const merge = (d: FetchOptions, o: FetchOptions): FetchOptions => {
+  const h = new Headers(d.headers)
+  if (o.headers) new Headers(o.headers).forEach((v, k) => h.set(k, v))
+  return { ...d, ...o, headers: h, middleware: [...(d.middleware || []), ...(o.middleware || [])] }
 }
 
-export function createSushi(defaultOptions: FetchOptions = {}) {
-  const sushi = <T = unknown>(url: string, options: FetchOptions = {}) => {
-    const mergedOptions: FetchOptions = {
-      ...defaultOptions,
-      ...options,
-      headers: mergeHeaders(defaultOptions.headers, options.headers),
-      middleware: [
-        ...(defaultOptions.middleware || []),
-        ...(options.middleware || [])
-      ]
-    }
-    return fetcher<T>(url, mergedOptions)
-  }
-
-  sushi.create = (opts: FetchOptions) => {
-    return createSushi({
-      ...defaultOptions,
-      ...opts,
-      headers: mergeHeaders(defaultOptions.headers, opts.headers),
-      middleware: [
-        ...(defaultOptions.middleware || []),
-        ...(opts.middleware || [])
-      ]
-    })
-  }
-
-  // Helper shortcuts (optional but nice)
-  sushi.get = <T = unknown>(url: string, opts?: FetchOptions) => sushi<T>(url, { ...opts, method: "GET" })
-  sushi.post = <T = unknown>(url: string, data?: any, opts?: FetchOptions) => 
-    sushi<T>(url, { ...opts, method: "POST", data })
-  sushi.put = <T = unknown>(url: string, data?: any, opts?: FetchOptions) => 
-    sushi<T>(url, { ...opts, method: "PUT", data })
-  sushi.delete = <T = unknown>(url: string, opts?: FetchOptions) => sushi<T>(url, { ...opts, method: "DELETE" })
-
-  return sushi
+export function createSushi(dOpts: FetchOptions = {}) {
+  const s = <T = unknown>(url: string, o: FetchOptions = {}) => fetcher<T>(url, merge(dOpts, o))
+  s.create = (o: FetchOptions) => createSushi(merge(dOpts, o))
+  s.get = <T = unknown>(url: string, o?: FetchOptions) => s<T>(url, { ...o, method: "GET" })
+  s.post = <T = unknown>(url: string, d?: any, o?: FetchOptions) => s<T>(url, { ...o, method: "POST", data: d })
+  s.put = <T = unknown>(url: string, d?: any, o?: FetchOptions) => s<T>(url, { ...o, method: "PUT", data: d })
+  s.delete = <T = unknown>(url: string, o?: FetchOptions) => s<T>(url, { ...o, method: "DELETE" })
+  return s
 }
 
 /* ============================= */
@@ -514,10 +257,6 @@ export const sushiCache = {
   subscribe: <T>(key: string, listener: (data: T | null) => void) => cache.subscribe(key, listener),
   invalidateTag: (tag: string) => cache.invalidateTag(tag),
 }
-
-/* ============================= */
-/* ========= EXPORTS =========== */
-/* ============================= */
 
 export const sushiFetch = createSushi()
 export const addSushiMiddleware = addMiddleware
