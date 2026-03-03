@@ -6,7 +6,6 @@
 
 [![NPM Version](https://img.shields.io/npm/v/sushi-fetch?color=33cd56&logo=npm&style=flat-square)](https://www.npmjs.com/package/sushi-fetch)
 [![NPM Downloads](https://img.shields.io/npm/dm/sushi-fetch?color=blue&style=flat-square)](https://www.npmjs.com/package/sushi-fetch)
-[![Bundle Size](https://img.shields.io/bundlephobia/minzip/sushi-fetch?color=success&label=size&style=flat-square)](https://bundlephobia.com/package/sushi-fetch)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue?logo=typescript&style=flat-square)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/npm/l/sushi-fetch?color=orange&style=flat-square)](./LICENSE)
 
@@ -26,7 +25,7 @@
 
 Standard HTTP clients like `fetch` or `axios` provide the basics, but modern apps require more: **caching**, **retries**, **request deduplication**, and **reactivity**. Usually, you'd need to install massive libraries like TanStack Query or SWR to get these features.
 
-**sushi-fetch** gives you those "superpowers" in a tiny package (under 3KB gzipped) with **zero dependencies**. It’s designed to be the "sweet spot" between a raw fetch and a heavy-duty state manager.
+**sushi-fetch** gives you those "superpowers" in a tiny package with **zero dependencies**. It’s designed to be the "sweet spot" between a raw fetch and a heavy-duty state manager.
 
 ### ✨ Features at a Glance
 
@@ -100,6 +99,10 @@ const api = sushi.create({
 
 // Use it like a normal fetch
 const users = await api('/users'); 
+
+// Or use shortcut methods
+const user = await api.get('/users/1');
+const newUser = await api.post('/users', { name: 'Sushi' });
 ```
 
 ### 2. Stale-While-Revalidate (SWR)
@@ -162,12 +165,16 @@ Extends standard `RequestInit` with:
 | `cache` | `boolean` | `true` | Enable/disable memory caching. |
 | `ttl` | `number` | `5000` | Cache lifetime in milliseconds. |
 | `revalidate` | `boolean` | `false` | Enable SWR behavior. |
+| `force` | `boolean` | `false` | Bypass cache and fetch from network. |
+| `cacheKey` | `string` | `-` | Custom key for caching (default is auto-generated). |
 | `timeout` | `number` | `-` | Request timeout in milliseconds. |
 | `retries` | `number` | `0` | Number of retry attempts. |
 | `retryStrategy` | `fixed \| exponential` | `exponential` | Backoff algorithm for retries. |
 | `cacheTags` | `string[]` | `[]` | Tags for grouped cache invalidation. |
 | `json` | `boolean` | `false` | Quick toggle for JSON content-type. |
 | `token` | `string` | `-` | Shorthand for Bearer Authorization header. |
+| `onSuccess` | `(data) => void` | `-` | Success callback. |
+| `onError` | `(err) => void` | `-` | Error callback. |
 
 ### `sushiCache` Utilities
 
@@ -183,7 +190,6 @@ Extends standard `RequestInit` with:
 
 | Feature | Fetch | Axios | **sushi-fetch** |
 | :--- | :---: | :---: | :---: |
-| Bundle Size | 0 | ~30KB | **< 3KB** |
 | Caching | ❌ | ❌ | ✅ (Built-in) |
 | Deduplication | ❌ | ❌ | ✅ (Auto) |
 | SWR Support | ❌ | ❌ | ✅ |
