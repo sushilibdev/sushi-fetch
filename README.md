@@ -14,8 +14,8 @@
   <a href="#-features">Features</a> •
   <a href="#-installation">Installation</a> •
   <a href="#-quick-start">Quick Start</a> •
-  <a href="#-advanced-usage">Advanced</a> •
-  <a href="#-api-reference">API</a>
+  <a href="#-advanced-usage">Advanced Usage</a> •
+  <a href="#-api-reference">API Reference</a>
 </p>
 
 </div>
@@ -33,10 +33,11 @@ Standard HTTP clients like `fetch` or `axios` provide the basics, but modern app
 *   🚀 **Request Deduplication**: Automatically groups identical parallel requests into one.
 *   🧠 **Smart Caching**: Built-in TTL, LRU eviction, and sliding expiration.
 *   🔄 **Stale-While-Revalidate (SWR)**: Serve cached data instantly while refreshing in the background.
-*   📡 **Reactivity (Pub/Sub)**: Subscribe to cache keys for instant UI updates across components.
-*   🔁 **Flexible Retries**: Fixed or exponential backoff strategies for flaky networks.
+*   📡 **Reactivity (Pub/Sub)**: Subscribe to cache keys for instant UI updates.
+*   🔁 **Flexible Retries**: Fixed or exponential backoff strategies.
 *   🏷️ **Cache Tagging**: Group related requests and invalidate them all at once.
-*   🔌 **Global Middleware**: Intercept requests, responses, and errors globally or per-instance.
+*   🛡️ **Interceptors**: Async request/response gatekeepers for auth & global logic.
+*   🔌 **Global Middleware**: Hook into the lifecycle of every request.
 *   🪶 **Ultra Lightweight**: Zero dependencies, tiny footprint, tree-shakable.
 
 ---
@@ -71,16 +72,6 @@ const data = await sushiFetch('https://api.example.com/user', {
 const cachedData = await sushiFetch('https://api.example.com/user');
 ```
 
-### Automatic Request Deduplication
-```typescript
-// Even if called 100 times in parallel, only ONE network request is sent.
-const [res1, res2, res3] = await Promise.all([
-  sushiFetch('/api/config'),
-  sushiFetch('/api/config'),
-  sushiFetch('/api/config'),
-]);
-```
-
 ---
 
 ## 🛠 Advanced Usage
@@ -93,62 +84,65 @@ import { sushi } from 'sushi-fetch';
 
 const api = sushi.create({
   baseUrl: 'https://api.myapp.com/v1',
-  token: 'secret-token', // Auto-adds Bearer token
-  json: true,           // Auto-sets Content-Type: application/json
+  token: 'secret-token',
+  json: true,
   timeout: 5000,
 });
 
-// Use it like a normal fetch
-const users = await api('/users'); 
-
-// Or use shortcut methods
-const user = await api.get('/users/1');
-const newUser = await api.post('/users', { name: 'Sushi' });
+const users = await api.get('/users');
 ```
 
 ### 2. Stale-While-Revalidate (SWR)
-Provide a snappy UI by showing old data while fetching the latest in the background.
+Show old data while fetching the latest in the background.
 
 ```typescript
 const data = await sushiFetch('/api/profile', {
-  revalidate: true, // Returns cached data immediately, then fetches & updates cache
+  revalidate: true, 
 });
 ```
 
 ### 3. Reactive UI Updates
-`sushi-fetch` includes a built-in Pub/Sub system. Perfect for React hooks or global state.
+Built-in Pub/Sub system for global state synchronization.
 
 ```typescript
 import { sushiCache } from 'sushi-fetch';
 
-// Subscribe to a specific key
 const unsubscribe = sushiCache.subscribe('/api/user', (newData) => {
   console.log('User data updated:', newData);
 });
 
-// Later, mutate the data (Optimistic Update)
 sushiCache.mutate('/api/user', { name: 'New Name' });
-
-// Or invalidate via tags
-sushiCache.invalidateTag('user-group');
 ```
 
-### 4. Global Middleware
-Add logging, authentication, or custom error handling.
+### 4. Interceptors (v0.7.0)
+Modify requests before they are sent and wrap responses before they are processed. Perfect for async token injection or global error handling.
+
+```typescript
+const api = sushi.create({
+  interceptors: {
+    request: async (url, options) => {
+      const token = await getAuthToken(); // Async token injection
+      const headers = new Headers(options.headers);
+      headers.set('Authorization', `Bearer ${token}`);
+      return { ...options, headers };
+    },
+    response: async (res) => {
+      if (res.status === 401) window.location.href = '/login';
+      return res;
+    }
+  }
+});
+```
+
+### 5. Global Middleware
+Add logging or custom lifecycle hooks globally.
 
 ```typescript
 import { addSushiMiddleware } from 'sushi-fetch';
 
 addSushiMiddleware({
-  onRequest: (ctx) => {
-    console.log(`🛫 Fetching: ${ctx.url}`);
-  },
-  onResponse: (res) => {
-    console.log(`✅ Success: ${res.status}`);
-  },
-  onError: (err) => {
-    console.error(`❌ Failed:`, err.message);
-  }
+  onRequest: (ctx) => console.log(`🛫 Fetching: ${ctx.url}`),
+  onResponse: (res) => console.log(`✅ Success: ${res.status}`),
 });
 ```
 
@@ -156,9 +150,7 @@ addSushiMiddleware({
 
 ## ⚙️ API Reference
 
-### `sushiFetch(url, options)`
-
-Extends standard `RequestInit` with:
+### `sushiFetch(url, options)` / `sushi.create(options)`
 
 | Option | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
@@ -167,15 +159,14 @@ Extends standard `RequestInit` with:
 | `ttl` | `number` | `5000` | Cache lifetime in milliseconds. |
 | `revalidate` | `boolean` | `false` | Enable SWR behavior. |
 | `force` | `boolean` | `false` | Bypass cache and fetch from network. |
-| `cacheKey` | `string` | `-` | Custom key for caching (default is auto-generated). |
+| `cacheKey` | `string` | `-` | Custom key for caching. |
 | `timeout` | `number` | `-` | Request timeout in milliseconds. |
 | `retries` | `number` | `0` | Number of retry attempts. |
 | `retryStrategy` | `fixed \| exponential` | `exponential` | Backoff algorithm for retries. |
 | `cacheTags` | `string[]` | `[]` | Tags for grouped cache invalidation. |
+| `interceptors` | `Interceptors` | `-` | Request and response interceptors (v0.7.0). |
 | `json` | `boolean` | `false` | Quick toggle for JSON content-type. |
 | `token` | `string` | `-` | Shorthand for Bearer Authorization header. |
-| `onSuccess` | `(data) => void` | `-` | Success callback. |
-| `onError` | `(err) => void` | `-` | Error callback. |
 
 ### `sushiCache` Utilities
 
@@ -197,12 +188,13 @@ Extends standard `RequestInit` with:
 | Retries | ❌ | ❌ | ✅ |
 | Reactivity | ❌ | ❌ | ✅ |
 | Middlewares | ❌ | ✅ | ✅ |
+| Interceptors | ❌ | ✅ | ✅ |
 
 ---
 
 ## 🤝 Contributing
 
-We love contributions! Whether it's a bug report, feature request, or a PR, check out our [CONTRIBUTING.md](./CONTRIBUTING.md) to get started.
+We love contributions! Check out our [CONTRIBUTING.md](./CONTRIBUTING.md) to get started.
 
 ---
 
