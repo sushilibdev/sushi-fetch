@@ -42,6 +42,11 @@ export type Middleware = {
   onError?: (err: unknown, ctx: MiddlewareContext) => Promise<void> | void
 }
 
+export type Interceptors = {
+  request?: (url: string, options: FetchOptions) => Promise<FetchOptions | void> | FetchOptions | void
+  response?: (res: Response) => Promise<Response | void> | Response | void
+}
+
 export type FetchOptions = RequestInit &
   RetryConfig & {
     baseUrl?: string
@@ -58,6 +63,7 @@ export type FetchOptions = RequestInit &
     transform?: <T>(data: T) => T
     validateStatus?: (status: number) => boolean
     middleware?: Middleware[]
+    interceptors?: Interceptors
     onSuccess?: (data: unknown) => void
     onError?: (error: unknown) => void
     json?: boolean
@@ -152,7 +158,13 @@ async function executeRequest<T = unknown>(url: string, opts: FetchOptions, ctx:
       try {
         let fUrl = url
         if (opts.baseUrl && !url.includes("://")) fUrl = `${opts.baseUrl.replace(/\/$/, "")}/${url.replace(/^\//, "")}`
-        const res = await globalThis.fetch(fUrl, { ...fOpts, signal })
+        let res = await globalThis.fetch(fUrl, { ...fOpts, signal })
+
+        // 2. Response Interceptor (The Filter)
+        if (opts.interceptors?.response) {
+          res = (await opts.interceptors.response(res)) || res
+        }
+
         if (!vs(res.status)) {
           let ed: any
           try { const c = res.clone(); ed = (c.headers.get("content-type") || "").includes("json") ? await c.json() : await c.text() } catch {}
@@ -180,6 +192,11 @@ async function executeRequest<T = unknown>(url: string, opts: FetchOptions, ctx:
 }
 
 export async function fetcher<T = unknown>(url: string, opts: FetchOptions = {}): Promise<T> {
+  // 1. Request Interceptor (The Gatekeeper)
+  if (opts.interceptors?.request) {
+    opts = (await opts.interceptors.request(url, opts)) || opts
+  }
+
   const { cache: useC = true, ttl = DEFAULT_TTL, revalidate: rv = false, force = false, cacheKey: ck, cacheTags: ct = [], json, data: payload, token, ...rest } = opts
   const h = new Headers(rest.headers)
   let b = rest.body
@@ -229,7 +246,13 @@ export async function fetcher<T = unknown>(url: string, opts: FetchOptions = {})
 const merge = (d: FetchOptions, o: FetchOptions): FetchOptions => {
   const h = new Headers(d.headers)
   if (o.headers) new Headers(o.headers).forEach((v, k) => h.set(k, v))
-  return { ...d, ...o, headers: h, middleware: [...(d.middleware || []), ...(o.middleware || [])] }
+  return { 
+    ...d, 
+    ...o, 
+    headers: h, 
+    middleware: [...(d.middleware || []), ...(o.middleware || [])],
+    interceptors: { ...(d.interceptors || {}), ...(o.interceptors || {}) }
+  }
 }
 
 export function createSushi(dOpts: FetchOptions = {}) {

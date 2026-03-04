@@ -129,6 +129,30 @@ async function cacheTagsExample() {
   console.log(`  🔎 URL 2 in Cache? ${sushiCache.has(url2)}`) // Pasti false!
 }
 
+async function interceptorExample() {
+  section("🛡️ 7. INTERCEPTORS (v0.7.0)")
+  console.log(`  ${c.dim}Setting up an instance with interceptors...${c.reset}`)
+  
+  const sushi = sushiFetch.create({
+    interceptors: {
+      request: async (url, options) => {
+        console.log(`  🚧 [Request Interceptor] Fetching: ${url}`)
+        // Modifikasi headers (misal: Inject Token)
+        const headers = new Headers(options.headers)
+        headers.set('X-Sushi-Version', '0.7.0')
+        return { ...options, headers }
+      },
+      response: async (res) => {
+        console.log(`  🚥 [Response Interceptor] Status: ${res.status}`)
+        return res
+      }
+    }
+  })
+
+  await sushi.get("https://jsonplaceholder.typicode.com/todos/1")
+  console.log(`  ✅ Interceptors executed successfully!`)
+}
+
 // ==============================
 // 🏁 RUNNER
 // ==============================
@@ -142,6 +166,7 @@ async function runAll() {
   await reactivityExample()
   await retryAndTimeoutExample()
   await cacheTagsExample()
+  await interceptorExample()
 
   console.log(`\n${c.green}🎉 ALL FEATURES WORK PERFECTLY!${c.reset}\n`)
 }
