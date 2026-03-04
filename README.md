@@ -8,6 +8,7 @@
 [![NPM Downloads](https://img.shields.io/npm/dm/sushi-fetch?color=blue&style=flat-square)](https://www.npmjs.com/package/sushi-fetch)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue?logo=typescript&style=flat-square)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/npm/l/sushi-fetch?color=orange&style=flat-square)](./LICENSE)
+[![Bundle Size](https://img.shields.io/bundlephobia/minzip/sushi-fetch?color=33cd56&style=flat-square)](https://bundlephobia.com/package/sushi-fetch)
 
 <p align="center">
   <a href="#-features">Features</a> •
