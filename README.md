@@ -1,200 +1,126 @@
 <div align="center">
 
 # 🍣 sushi-fetch
+**The lightweight, reactive powerhouse for modern data fetching.**
 
-**A tiny, zero-dependency, and highly-optimized data-fetching & caching library for modern JavaScript & TypeScript apps.**
-
-[![NPM Version](https://img.shields.io/npm/v/sushi-fetch?color=33cd56&logo=npm&style=flat-square)](https://www.npmjs.com/package/sushi-fetch)
-[![NPM Downloads](https://img.shields.io/npm/dm/sushi-fetch?color=blue&style=flat-square)](https://www.npmjs.com/package/sushi-fetch)
-[![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue?logo=typescript&style=flat-square)](https://www.typescriptlang.org/)
-[![License](https://img.shields.io/npm/l/sushi-fetch?color=orange&style=flat-square)](./LICENSE)
-[![Bundle Size](https://img.shields.io/bundlephobia/minzip/sushi-fetch?color=33cd56&style=flat-square)](https://bundlephobia.com/package/sushi-fetch)
+[![NPM Version](https://img.shields.io/npm/v/sushi-fetch?color=ff4757&logo=npm&style=for-the-badge)](https://www.npmjs.com/package/sushi-fetch)
+[![Bundle Size](https://img.shields.io/bundlephobia/minzip/sushi-fetch?color=2f3542&label=Gzipped&style=for-the-badge)](https://bundlephobia.com/package/sushi-fetch)
+[![Downloads](https://img.shields.io/npm/dm/sushi-fetch?color=5352ed&style=for-the-badge)](https://www.npmjs.com/package/sushi-fetch)
+[![Stars](https://img.shields.io/github/stars/sushilibdev/sushi-fetch?style=for-the-badge&color=eccc68)](https://github.com/sushilibdev/sushi-fetch)
 
 <p align="center">
-  <a href="#-features">Features</a> •
-  <a href="#-installation">Installation</a> •
-  <a href="#-quick-start">Quick Start</a> •
-  <a href="#-advanced-usage">Advanced Usage</a> •
-  <a href="#-api-reference">API Reference</a>
+  <b>Tiny footprint. Zero dependencies. Enterprise features.</b>
+  <br />
+  Stop shipping 15kB+ of <code>axios</code> or <code>tanstack-query</code> for simple apps. 
+  <br />
+  Get Caching, SWR, Retries, and Streaming in ~3kB (Gzipped).
 </p>
+
+[Explore Docs](#-api-reference) • [Report Bug](https://github.com/sushilibdev/sushi-fetch/issues) • [Request Feature](https://github.com/sushilibdev/sushi-fetch/issues)
 
 </div>
 
 ---
 
-## 🧐 Why sushi-fetch?
+## 🚀 Why sushi-fetch?
 
-Standard HTTP clients like `fetch` or `axios` provide the basics, but modern apps require more: **caching**, **retries**, **request deduplication**, and **reactivity**. Usually, you'd need to install massive libraries like TanStack Query or SWR to get these features.
+Modern web apps need more than just `fetch()`. They need **caching**, **automatic retries**, and **reactivity**. Usually, you'd have to choose between "too simple" (native fetch) or "too heavy" (TanStack Query).
 
-**sushi-fetch** gives you those "superpowers" in a tiny package with **zero dependencies**. It’s designed to be the "sweet spot" between a raw fetch and a heavy-duty state manager.
+**sushi-fetch** is the "Sweet Spot". It's built for developers who care about **Performance** and **Bundle Size** without sacrificing the developer experience (DX).
 
-### ✨ Features at a Glance
+### ✨ The "Secret Sauce" (Features)
 
-*   🚀 **Request Deduplication**: Automatically groups identical parallel requests into one.
-*   🧠 **Smart Caching**: Built-in TTL, LRU eviction, and sliding expiration.
-*   🔄 **Stale-While-Revalidate (SWR)**: Serve cached data instantly while refreshing in the background.
-*   📡 **Reactivity (Pub/Sub)**: Subscribe to cache keys for instant UI updates.
-*   🔁 **Flexible Retries**: Fixed or exponential backoff strategies.
-*   🏷️ **Cache Tagging**: Group related requests and invalidate them all at once.
-*   🛡️ **Interceptors**: Async request/response gatekeepers for auth & global logic.
-*   🔌 **Global Middleware**: Hook into the lifecycle of every request.
-*   🪶 **Ultra Lightweight**: Zero dependencies, tiny footprint, tree-shakable.
+* 🧠 **Smart Memory Cache**: Built-in TTL, sliding expiration, and LRU eviction.
+* 🔄 **SWR (Stale-While-Revalidate)**: Instant UI updates with background synchronization.
+* ⚡ **Request Deduplication**: No more "double-fetching". Identical requests are merged into one.
+* 📡 **Reactive Pub/Sub**: Real-time state sync across your entire UI without a Store.
+* 📈 **Native Streaming**: Simple progress tracking for big uploads/downloads.
+* 🛡️ **Async Interceptors**: Full control over requests/responses (v0.7.0+).
+* 🔁 **Smart Retries**: Fixed or Exponential Backoff strategies.
+* 🪶 **Zero Dependencies**: Pure, tree-shakable TypeScript.
 
 ---
 
 ## 📦 Installation
 
 ```bash
-# Using npm
-npm install sushi-fetch
-
-# Using pnpm
-pnpm add sushi-fetch
-
-# Using bun
-bun add sushi-fetch
+npm install sushi-fetch  # or pnpm, yarn, bun
 ```
 
----
+## 🛠 Quick Start 
 
-## 🚀 Quick Start
-
-### Basic Fetching with Caching
-```typescript
+**1. Simple Fetching with 0ms Cache**
+```ts
 import { sushiFetch } from 'sushi-fetch';
 
-// First call: Network request
-const data = await sushiFetch('https://api.example.com/user', {
-  ttl: 60000, // Cache for 1 minute
-});
+// 1st call: Goes to Network
+const data = await sushiFetch('/api/user', { ttl: 60000 });
 
-// Second call (immediate): 0ms response time, served from memory!
-const cachedData = await sushiFetch('https://api.example.com/user');
+// 2nd call: Served from Memory instantly!
+const cached = await sushiFetch('/api/user');
+```
+
+**2. The Power of SWR**
+
+Show the old data immediately, fetch the new one in the background. Your UI feels 10x faster.
+
+```ts
+const { data } = await sushiFetch('/api/stats', { revalidate: true });
+```
+
+**3. Real-time Progress (The "Snake" Progress)**
+
+Tracking download/upload progress has never been this easy.
+
+```ts
+await sushiFetch('/api/large-file', {
+  onProgress: (percent) => console.log(`Progress: ${percent}%`),
+});
 ```
 
 ---
 
-## 🛠 Advanced Usage
+## 📊 Comparison: No Bloat, Just Speed
 
-### 1. Creating Instances
-Create pre-configured instances for different services.
+| Feature | Native Fetch | Axios | **Sushi-Fetch** |
+| :--- | :--- | :--- | :--- |
+| **Size(Gzip)** | ~0kB | ~5.5kB | **~3kB** |
+| **Caching** | ❌ | ❌ | ✅ (Built-in) |
+| **Deduplication** | ❌ | ❌ | ✅ (Auto) |
+| **SWR** | ❌ | ❌ | ✅ |
+| **Reactivity** | ❌ | ❌ | ✅ |
+| **Streaming** | ❌ (Hard) | ❌ | ✅ (Simple) |
 
-```typescript
+---
+
+## ⚙️ Advanced: Global Instance
+
+Create a pre-configured instance for your specific API.
+
+```ts
 import { sushi } from 'sushi-fetch';
 
 const api = sushi.create({
-  baseUrl: 'https://api.myapp.com/v1',
-  token: 'secret-token',
-  json: true,
-  timeout: 5000,
-});
-
-const users = await api.get('/users');
-```
-
-### 2. Stale-While-Revalidate (SWR)
-Show old data while fetching the latest in the background.
-
-```typescript
-const data = await sushiFetch('/api/profile', {
-  revalidate: true, 
-});
-```
-
-### 3. Reactive UI Updates
-Built-in Pub/Sub system for global state synchronization.
-
-```typescript
-import { sushiCache } from 'sushi-fetch';
-
-const unsubscribe = sushiCache.subscribe('/api/user', (newData) => {
-  console.log('User data updated:', newData);
-});
-
-sushiCache.mutate('/api/user', { name: 'New Name' });
-```
-
-### 4. Interceptors (v0.7.0)
-Modify requests before they are sent and wrap responses before they are processed. Perfect for async token injection or global error handling.
-
-```typescript
-const api = sushi.create({
+  baseUrl: '[https://api.myapp.com/v1](https://api.myapp.com/v1)',
+  token: 'my-secret-token',
   interceptors: {
     request: async (url, options) => {
-      const token = await getAuthToken(); // Async token injection
-      const headers = new Headers(options.headers);
-      headers.set('Authorization', `Bearer ${token}`);
-      return { ...options, headers };
-    },
-    response: async (res) => {
-      if (res.status === 401) window.location.href = '/login';
-      return res;
+      // Add dynamic headers here
+      return options;
     }
   }
 });
 ```
 
-### 5. Global Middleware
-Add logging or custom lifecycle hooks globally.
-
-```typescript
-import { addSushiMiddleware } from 'sushi-fetch';
-
-addSushiMiddleware({
-  onRequest: (ctx) => console.log(`🛫 Fetching: ${ctx.url}`),
-  onResponse: (res) => console.log(`✅ Success: ${res.status}`),
-});
-```
-
 ---
 
-## ⚙️ API Reference
+## 🤝 Support the Project
 
-### `sushiFetch(url, options)` / `sushi.create(options)`
+This project is a labor of love for efficient code. If **sushi-fetch** helped you build a faster app, please consider:
 
-| Option | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `baseUrl` | `string` | `-` | Prefix for all request URLs. |
-| `cache` | `boolean` | `true` | Enable/disable memory caching. |
-| `ttl` | `number` | `5000` | Cache lifetime in milliseconds. |
-| `revalidate` | `boolean` | `false` | Enable SWR behavior. |
-| `force` | `boolean` | `false` | Bypass cache and fetch from network. |
-| `cacheKey` | `string` | `-` | Custom key for caching. |
-| `timeout` | `number` | `-` | Request timeout in milliseconds. |
-| `retries` | `number` | `0` | Number of retry attempts. |
-| `retryStrategy` | `fixed \| exponential` | `exponential` | Backoff algorithm for retries. |
-| `cacheTags` | `string[]` | `[]` | Tags for grouped cache invalidation. |
-| `interceptors` | `Interceptors` | `-` | Request and response interceptors (v0.7.0). |
-| `json` | `boolean` | `false` | Quick toggle for JSON content-type. |
-| `token` | `string` | `-` | Shorthand for Bearer Authorization header. |
-
-### `sushiCache` Utilities
-
-*   `sushiCache.get(key)`: Retrieve cached data.
-*   `sushiCache.set(key, data, options)`: Manually set cache.
-*   `sushiCache.mutate(key, data | updater)`: Update cache and notify subscribers.
-*   `sushiCache.subscribe(key, callback)`: Listen for changes.
-*   `sushiCache.invalidateTag(tag)`: Invalidate all keys matching a tag.
-
----
-
-## 📊 Comparison
-
-| Feature | Fetch | Axios | **sushi-fetch** |
-| :--- | :---: | :---: | :---: |
-| Caching | ❌ | ❌ | ✅ (Built-in) |
-| Deduplication | ❌ | ❌ | ✅ (Auto) |
-| SWR Support | ❌ | ❌ | ✅ |
-| Retries | ❌ | ❌ | ✅ |
-| Reactivity | ❌ | ❌ | ✅ |
-| Middlewares | ❌ | ✅ | ✅ |
-| Interceptors | ❌ | ✅ | ✅ |
-
----
-
-## 🤝 Contributing
-
-We love contributions! Check out our [CONTRIBUTING.md](./CONTRIBUTING.md) to get started.
+- Giving it a **Star** ⭐ (It helps others find the library!)
+- Submit an **Issue** if you find a bug.
+- Share it on **Twitter/X** or **LinkedIn.**
 
 ---
 

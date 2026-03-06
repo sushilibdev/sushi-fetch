@@ -38,7 +38,7 @@ export class SushiCache {
 
     if (options.cleanupInterval) {
       this.#timer = setInterval(() => this.pruneExpired(), options.cleanupInterval)
-      if (this.#timer.unref) this.#timer.unref()
+      if (this.#timer?.unref) this.#timer.unref()
     }
   }
 
@@ -61,6 +61,12 @@ export class SushiCache {
 
     this.delete(key)
 
+    // Optimasi: Hapus yang paling lama sebelum masukin yang baru kalau udah penuh
+    if (this.#store.size >= this.#maxSize) {
+      const oldest = this.#store.keys().next().value
+      if (oldest !== undefined) this.delete(oldest)
+    }
+
     this.#store.set(key, { data, expiry: Date.now() + ttl, lastAccess: Date.now(), tags })
 
     tags.forEach(tag => {
@@ -68,10 +74,6 @@ export class SushiCache {
       this.#tags.get(tag)!.add(key)
     })
 
-    if (this.#store.size > this.#maxSize) {
-      const oldest = this.#store.keys().next().value
-      if (oldest !== undefined) this.delete(oldest)
-    }
     this.#notify(key, data)
   }
 

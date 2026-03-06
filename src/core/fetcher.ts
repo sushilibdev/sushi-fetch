@@ -1,6 +1,7 @@
 import { SushiCache } from "./cache.js"
 
-const cache = new SushiCache()
+// Tambahkan maxSize biar HP 4GB nggak engap kalau data banyak
+const cache = new SushiCache({ maxSize: 100 })
 const pendingRequests = new Map<string, Promise<unknown>>()
 const revalidateLocks = new Set<string>()
 
@@ -68,6 +69,8 @@ export type FetchOptions = RequestInit &
     onError?: (error: unknown) => void
     json?: boolean
     token?: string
+    // FITUR BARU v0.8.0: onProgress
+    onProgress?: (p: { percentage: number; loaded: number; total: number }) => void
   }
 
 /* ============================= */
@@ -148,7 +151,7 @@ async function runMW(type: keyof Middleware, ctx: MiddlewareContext, arg?: any) 
 /* ============================= */
 
 async function executeRequest<T = unknown>(url: string, opts: FetchOptions, ctx: MiddlewareContext): Promise<T> {
-  const { timeout, retries: r = 3, retryDelay: d = 500, retryStrategy: s = "exponential", retryOn: ro, parseJson: pj = true, parser, transform, validateStatus: vs = (s) => s >= 200 && s < 300, onSuccess: ok, onError: fail, ...fOpts } = opts
+  const { timeout, retries: r = 3, retryDelay: d = 500, retryStrategy: s = "exponential", retryOn: ro, parseJson: pj = true, parser, transform, validateStatus: vs = (st) => st >= 200 && st < 300, onSuccess: ok, onError: fail, onProgress, ...fOpts } = opts
   const start = Date.now()
 
   try {
@@ -158,21 +161,54 @@ async function executeRequest<T = unknown>(url: string, opts: FetchOptions, ctx:
       try {
         let fUrl = url
         if (opts.baseUrl && !url.includes("://")) fUrl = `${opts.baseUrl.replace(/\/$/, "")}/${url.replace(/^\//, "")}`
-        let res = await globalThis.fetch(fUrl, { ...fOpts, signal })
+        let response = await globalThis.fetch(fUrl, { ...fOpts, signal })
 
-        // 2. Response Interceptor (The Filter)
         if (opts.interceptors?.response) {
-          res = (await opts.interceptors.response(res)) || res
+          response = (await opts.interceptors.response(response)) || response
         }
 
-        if (!vs(res.status)) {
+        if (!vs(response.status)) {
           let ed: any
-          try { const c = res.clone(); ed = (c.headers.get("content-type") || "").includes("json") ? await c.json() : await c.text() } catch {}
-          const err: SushiError = new Error(ed?.message || ed?.error || `HTTP ${res.status}`)
-          Object.assign(err, { status: res.status, response: res, data: ed })
+          try { const c = response.clone(); ed = (c.headers.get("content-type") || "").includes("json") ? await c.json() : await c.text() } catch {}
+          const err: SushiError = new Error(ed?.message || ed?.error || `HTTP ${response.status}`)
+          Object.assign(err, { status: response.status, response: response, data: ed })
           throw err
         }
-        return res
+
+        // === BUG FIXED: LOGIC STREAMING PROGRESS v0.8.0 ===
+        if (onProgress && response.body) {
+          const reader = response.body.getReader()
+          const total = Number(response.headers.get('Content-Length')) || 0
+          let loaded = 0
+
+          const stream = new ReadableStream({
+            // Menggunakan pull() mencegah lock pada stream sebelum data benar-benar diminta
+            async pull(controller) {
+              const { done, value } = await reader.read()
+              if (done) {
+                controller.close()
+                return
+              }
+              loaded += value.byteLength
+              onProgress({
+                percentage: total ? Math.round((loaded / total) * 100) : 0,
+                loaded,
+                total
+              })
+              controller.enqueue(value)
+            }
+          })
+          
+          // Timpa response asli dengan stream yang sudah kita "sadap" progress-nya
+          response = new Response(stream, {
+             headers: response.headers,
+             status: response.status,
+             statusText: response.statusText
+          })
+        }
+        // ================================================================
+
+        return response
       } catch (e: any) {
         if (e.name === "AbortError" && getIsTimeout()) Object.assign(e, { elapsedTime: Date.now() - start, reason: "timeout" })
         throw e
@@ -192,7 +228,6 @@ async function executeRequest<T = unknown>(url: string, opts: FetchOptions, ctx:
 }
 
 export async function fetcher<T = unknown>(url: string, opts: FetchOptions = {}): Promise<T> {
-  // 1. Request Interceptor (The Gatekeeper)
   if (opts.interceptors?.request) {
     opts = (await opts.interceptors.request(url, opts)) || opts
   }
@@ -216,7 +251,7 @@ export async function fetcher<T = unknown>(url: string, opts: FetchOptions = {})
     const c = cache.get<T>(key)
     if (c !== null) {
       if (rv && !revalidateLocks.has(key)) {
-        revalidateLocks.add(key); fetcher(url, { ...opts, revalidate: false, force: true }).finally(() => revalidateLocks.delete(key)).catch(() => {})
+        revalidateLocks.add(key); executeRequest<T>(url, rest as FetchOptions, ctx).then(d => cache.set(key, d, { ttl, tags: ct })).finally(() => revalidateLocks.delete(key)).catch(() => {})
       }
       return c
     }

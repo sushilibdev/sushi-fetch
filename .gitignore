@@ -1,35 +1,18 @@
-# dependencies
 node_modules
-.npmrc
-
-# build output
 dist
-
-# logs
 npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
-
-# env files
 .env
 .env.local
 .env.*.local
-
-# coverage
 coverage
-
-# cache
 .cache
 .tmp
 .temp
-
-# IDE
 .vscode
 .idea
-
-# OS
 .DS_Store
 Thumbs.db
-
-# TypeScript
 *.tsbuildinfo.npmrc
+package-lock.json
