@@ -52,27 +52,20 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts --minify --clean --define.process.env.NODE_ENV=\\\"production\\\" --no-splitting",
+    "build": "tsup src/index.ts --format cjs,esm --dts --minify --clean --define.process.env.NODE_ENV=\\\"production\\\" --no-splitting && npm run compress",
+    "compress": "gzip -c dist/index.js > dist/index.js.gz",
     "watch": "tsup src/index.ts --format cjs,esm --dts --watch",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/**/*.ts",
     "test": "vitest run",
-    "example:vanilla": "ts-node examples/vanilla-js/app.ts",
-    "example:express": "ts-node examples/express/server.ts",
-    "example:node-cli": "ts-node examples/node-cli/app.ts",
-    "example:bun": "bun run examples/bun/app.ts",
     "prepublishOnly": "npm run typecheck && npm run build"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
     "@types/node": "^20.11.0",
-    "@types/react": "^18.2.0",
     "eslint": "^10.0.2",
-    "express": "^4.18.2",
-    "react": "^18.2.0",
     "ts-node": "^10.9.2",
     "tsup": "^8.5.1",
     "typescript": "^5.3.3",
-    "vitest": "^1.2.0"
+    "vitest": "^1.6.1"
   }
 }

@@ -1,9 +1,17 @@
 import { SushiCache } from "./cache.js"
 
-// Tambahkan maxSize biar HP 4GB nggak engap kalau data banyak
 const cache = new SushiCache({ maxSize: 100 })
 const pendingRequests = new Map<string, Promise<unknown>>()
 const revalidateLocks = new Set<string>()
+
+const pollRegistry = new Map<string, any>()
+const focusRegistry = new Map<string, () => void>()
+
+if (typeof window !== "undefined") {
+  const onFocus = () => focusRegistry.forEach(fn => fn())
+  window.addEventListener("visibilitychange", () => document.visibilityState === "visible" && onFocus())
+  window.addEventListener("focus", onFocus)
+}
 
 const DEFAULT_TTL = 5000
 
@@ -69,8 +77,11 @@ export type FetchOptions = RequestInit &
     onError?: (error: unknown) => void
     json?: boolean
     token?: string
-    // FITUR BARU v0.8.0: onProgress
     onProgress?: (p: { percentage: number; loaded: number; total: number }) => void
+    // FITUR BARU v1.0.0
+    pollInterval?: number
+    revalidateOnFocus?: boolean
+    batch?: boolean
   }
 
 /* ============================= */
@@ -129,7 +140,7 @@ async function retryFetch<T>(fn: () => Promise<T>, r: number, d: number, s: "fix
       await sleep(s === "fixed" ? d : d * Math.pow(2, a - 1) + Math.random() * 100)
     }
   }
-  throw new Error() // Unreachable but needed for TS
+  throw new Error()
 }
 
 /* ============================= */
@@ -175,14 +186,12 @@ async function executeRequest<T = unknown>(url: string, opts: FetchOptions, ctx:
           throw err
         }
 
-        // === BUG FIXED: LOGIC STREAMING PROGRESS v0.8.0 ===
         if (onProgress && response.body) {
           const reader = response.body.getReader()
           const total = Number(response.headers.get('Content-Length')) || 0
           let loaded = 0
 
           const stream = new ReadableStream({
-            // Menggunakan pull() mencegah lock pada stream sebelum data benar-benar diminta
             async pull(controller) {
               const { done, value } = await reader.read()
               if (done) {
@@ -199,14 +208,12 @@ async function executeRequest<T = unknown>(url: string, opts: FetchOptions, ctx:
             }
           })
           
-          // Timpa response asli dengan stream yang sudah kita "sadap" progress-nya
           response = new Response(stream, {
              headers: response.headers,
              status: response.status,
              statusText: response.statusText
           })
         }
-        // ================================================================
 
         return response
       } catch (e: any) {
@@ -247,6 +254,21 @@ export async function fetcher<T = unknown>(url: string, opts: FetchOptions = {})
   const key = ck || buildCacheKey(url, rest)
   const ctx: MiddlewareContext = { url, options: { ...opts, headers: h, body: b } }
 
+  if (opts.revalidateOnFocus && !focusRegistry.has(key)) {
+    focusRegistry.set(key, () => {
+      // Secret revalidation in the background if the screen is active
+      if (!pendingRequests.has(key)) fetcher<T>(url, { ...opts, force: true, revalidateOnFocus: false }).catch(() => {})
+    })
+  }
+
+  if (opts.pollInterval && !pollRegistry.has(key)) {
+    const timer = setInterval(() => {
+      if (!pendingRequests.has(key)) fetcher<T>(url, { ...opts, force: true, pollInterval: undefined }).catch(() => {})
+    }, opts.pollInterval)
+    if (timer?.unref) timer.unref() // So Node.js can exit peacefully
+    pollRegistry.set(key, timer)
+  }
+
   if (!force && useC) {
     const c = cache.get<T>(key)
     if (c !== null) {
@@ -256,6 +278,8 @@ export async function fetcher<T = unknown>(url: string, opts: FetchOptions = {})
       return c
     }
   }
+
+  if (opts.batch) await new Promise(r => setTimeout(r, 0))
 
   if (pendingRequests.has(key)) return pendingRequests.get(key) as Promise<T>
 
@@ -314,6 +338,8 @@ export const sushiCache = {
   mutate: <T>(key: string, mutator: T | ((oldData: T | null) => T), ttl?: number) => cache.mutate(key, mutator, ttl),
   subscribe: <T>(key: string, listener: (data: T | null) => void) => cache.subscribe(key, listener),
   invalidateTag: (tag: string) => cache.invalidateTag(tag),
+  stopPolling: (key: string) => { clearInterval(pollRegistry.get(key)); pollRegistry.delete(key) },
+  clearFocusRevalidation: (key: string) => focusRegistry.delete(key)
 }
 
 export const sushiFetch = createSushi()

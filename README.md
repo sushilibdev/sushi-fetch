@@ -9,11 +9,11 @@
 [![Stars](https://img.shields.io/github/stars/sushilibdev/sushi-fetch?style=for-the-badge&color=eccc68)](https://github.com/sushilibdev/sushi-fetch)
 
 <p align="center">
-  <b>Tiny footprint. Zero dependencies. Enterprise features.</b>
+  <b>Tiny footprint. Zero dependencies. Enterprise-grade features.</b>
   <br />
   Stop shipping 15kB+ of <code>axios</code> or <code>tanstack-query</code> for simple apps. 
   <br />
-  Get Caching, SWR, Retries, and Streaming in ~3kB (Gzipped).
+  Get Smart Batching, Offline Persistence, SWR, and Reactivity in <b>~3kB (Gzipped)</b>.
 </p>
 
 [Explore Docs](#-api-reference) • [Report Bug](https://github.com/sushilibdev/sushi-fetch/issues) • [Request Feature](https://github.com/sushilibdev/sushi-fetch/issues)
@@ -22,22 +22,23 @@
 
 ---
 
-## 🚀 Why sushi-fetch?
+## 🚀 The v1.0.0 Evolution
 
-Modern web apps need more than just `fetch()`. They need **caching**, **automatic retries**, and **reactivity**. Usually, you'd have to choose between "too simple" (native fetch) or "too heavy" (TanStack Query).
+Modern web apps need more than just `fetch()`. They need to survive poor networks, deduplicate aggressive UI renders, and keep data fresh automatically. Usually, you'd have to choose between "too barebones" (native fetch) or "too heavy" (GraphQL clients/TanStack).
 
-**sushi-fetch** is the "Sweet Spot". It's built for developers who care about **Performance** and **Bundle Size** without sacrificing the developer experience (DX).
+**sushi-fetch v1.0.0** is the "Sweet Spot". We bring Silicon Valley-grade data synchronization to a ridiculously small footprint.
 
 ### ✨ The "Secret Sauce" (Features)
 
+* 🚦 **[NEW] Smart Batching (Event Loop Deduplication)**: Prevents network spam. 10 identical requests in the same tick? Only 1 hits the server.
+* 💾 **[NEW] Offline Persistence**: Automatically dumps cache to `localStorage` (or custom adapters) and hydrates instantly on reload.
+* 📡 **[NEW] Auto-Polling & Focus Revalidation**: Keeps your UI feeling "alive". Data refetches automatically when the user switches tabs or on a set interval.
 * 🧠 **Smart Memory Cache**: Built-in TTL, sliding expiration, and LRU eviction.
 * 🔄 **SWR (Stale-While-Revalidate)**: Instant UI updates with background synchronization.
-* ⚡ **Request Deduplication**: No more "double-fetching". Identical requests are merged into one.
-* 📡 **Reactive Pub/Sub**: Real-time state sync across your entire UI without a Store.
+* ⚡ **Reactive Pub/Sub**: Real-time state sync across your entire UI without needing Redux or Pinia.
 * 📈 **Native Streaming**: Simple progress tracking for big uploads/downloads.
-* 🛡️ **Async Interceptors**: Full control over requests/responses (v0.7.0+).
-* 🔁 **Smart Retries**: Fixed or Exponential Backoff strategies.
-* 🪶 **Zero Dependencies**: Pure, tree-shakable TypeScript.
+* 🔁 **Smart Retries**: Fixed or Exponential Backoff strategies out of the box.
+* 🪶 **Zero Dependencies**: Pure, tree-shakable, strongly-typed TypeScript.
 
 ---
 
@@ -47,34 +48,54 @@ Modern web apps need more than just `fetch()`. They need **caching**, **automati
 npm install sushi-fetch  # or pnpm, yarn, bun
 ```
 
-## 🛠 Quick Start 
+---
 
-**1. Simple Fetching with 0ms Cache**
-```ts
-import { sushiFetch } from 'sushi-fetch';
+## 🛠 The Magic (Quick Starts)
 
-// 1st call: Goes to Network
-const data = await sushiFetch('/api/user', { ttl: 60000 });
+**1. The "Indestructible" Request (v1.0.0)**
 
-// 2nd call: Served from Memory instantly!
-const cached = await sushiFetch('/api/user');
+Combine our most powerful features in a single, elegant call.
+
+```ts 
+import { sushi } from 'sushi-fetch';
+
+const data = await sushi.get('/api/dashboard', {
+  batch: true,              // Groups simultaneous calls into one network request
+  revalidateOnFocus: true,  // Silently updates data when user returns to the tab
+  pollInterval: 10000       // Keeps data fresh every 10 seconds
+});
 ```
 
-**2. The Power of SWR**
+**2. Offline Persistence (Zero-Config Hydration)**
+
+Keep your app working even when the signal drops. `sushi-fetch` handles the storage and hydration automatically.
+
+```ts
+import { SushiCache } from 'sushi-fetch';
+
+// Setup persistent cache (Uses localStorage by default in browsers)
+const persistentCache = new SushiCache({ 
+  persistKey: 'my-app-offline-db' 
+});
+
+// Next time the user opens the app, data loads from disk in 0ms!
+```
+
+**3. The Power of SWR (Stale-While-Revalidate)**
 
 Show the old data immediately, fetch the new one in the background. Your UI feels 10x faster.
 
 ```ts
-const { data } = await sushiFetch('/api/stats', { revalidate: true });
+const { data } = await sushi.get('/api/stats', { revalidate: true });
 ```
 
-**3. Real-time Progress (The "Snake" Progress)**
+**4. Real-time Progress (Streaming)**
 
-Tracking download/upload progress has never been this easy.
+Tracking download/upload progress without messing with raw Streams.
 
 ```ts
-await sushiFetch('/api/large-file', {
-  onProgress: (percent) => console.log(`Progress: ${percent}%`),
+await sushi.get('/api/large-file', {
+  onProgress: ({ percentage }) => console.log(`Downloading: ${percentage}%`),
 });
 ```
 
@@ -84,46 +105,49 @@ await sushiFetch('/api/large-file', {
 
 | Feature | Native Fetch | Axios | **Sushi-Fetch** |
 | :--- | :--- | :--- | :--- |
-| **Size(Gzip)** | ~0kB | ~5.5kB | **~3kB** |
+| **Size (Gzip)**| ~0kB | ~5.5kB | **~3.5kB** |
 | **Caching** | ❌ | ❌ | ✅ (Built-in) |
-| **Deduplication** | ❌ | ❌ | ✅ (Auto) |
+| **Smart Batching** | ❌ | ❌ | ✅ (Auto) |
+| **Offline Sync** | ❌ | ❌ | ✅ |
 | **SWR** | ❌ | ❌ | ✅ |
-| **Reactivity** | ❌ | ❌ | ✅ |
+| **Revalidation** | ❌ | ❌ | ✅ (On Focus / Interval) |
 | **Streaming** | ❌ (Hard) | ❌ | ✅ (Simple) |
 
 ---
 
-## ⚙️ Advanced: Global Instance
+## ⚙️ Advanced: Global Instance & Interceptors
 
-Create a pre-configured instance for your specific API.
+Create a pre-configured instance for your specific API, complete with middleware and auth interception.
 
 ```ts
-import { sushi } from 'sushi-fetch';
+import { createSushi } from 'sushi-fetch';
 
-const api = sushi.create({
+const api = createSushi({
   baseUrl: '[https://api.myapp.com/v1](https://api.myapp.com/v1)',
-  token: 'my-secret-token',
   interceptors: {
     request: async (url, options) => {
-      // Add dynamic headers here
+      options.token = getMySecretToken(); // Automatically attaches Bearer token
       return options;
     }
   }
 });
+
+// Usage anywhere in your app:
+const user = await api.get('/profile');
 ```
 
 ---
 
-## 🤝 Support the Project
+## 🤝 Support the Movement
 
-This project is a labor of love for efficient code. If **sushi-fetch** helped you build a faster app, please consider:
+This project is a labor of love for efficient, high-performance code. If sushi-fetch helped you build a faster app, please consider:
 
 - Giving it a **Star** ⭐ (It helps others find the library!)
-- Submit an **Issue** if you find a bug.
-- Share it on **Twitter/X** or **LinkedIn.**
+- Submitting an **Issue** if you find a bug.
+- Sharing it on **Twitter/X** or **LinkedIn.**
 
 ---
 
 ## 📄 License
 
-MIT © [sushilibdev](https://github.com/sushilibdev)
+MIT © sushilibdev

@@ -1,4 +1,4 @@
-type CacheEntry<T> = {
+export type CacheEntry<T> = {
   data: T
   expiry: number
   lastAccess: number
@@ -7,12 +7,21 @@ type CacheEntry<T> = {
 
 export type CacheListener<T = any> = (data: T | null) => void
 
+// Universal Storage Interface to run on Browser, Node.js, or React Native
+export type StorageAdapter = {
+  getItem: (key: string) => string | null | Promise<string | null>
+  setItem: (key: string, value: string) => void | Promise<void>
+  removeItem: (key: string) => void | Promise<void>
+}
+
 export type CacheOptions = {
   maxSize?: number
   defaultTTL?: number
   sliding?: boolean
   cleanupInterval?: number
   onEvict?: (key: string, value: any) => void
+  persistKey?: string
+  storage?: StorageAdapter 
 }
 
 export class SushiCache {
@@ -26,6 +35,11 @@ export class SushiCache {
   #sliding: boolean
   #onEvict?: (key: string, value: any) => void
 
+  // Persistence State
+  #persistKey?: string
+  #storage?: StorageAdapter
+  #syncTimer?: any
+
   #hits = 0
   #misses = 0
   #timer?: any
@@ -36,11 +50,69 @@ export class SushiCache {
     this.#sliding = options.sliding ?? false
     this.#onEvict = options.onEvict
 
+    this.#persistKey = options.persistKey
+    this.#storage = options.storage ?? (typeof globalThis !== 'undefined' ? globalThis.localStorage : undefined)
+
+    if (this.#persistKey && this.#storage) this.#hydrate()
+
     if (options.cleanupInterval) {
       this.#timer = setInterval(() => this.pruneExpired(), options.cleanupInterval)
       if (this.#timer?.unref) this.#timer.unref()
     }
   }
+
+  /* ============================= */
+  /* ===== PERSISTENCE CORE ====== */
+  /* ============================= */
+
+  // Load data from storage to RAM when first running
+  #hydrate() {
+    try {
+      const raw = this.#storage!.getItem(this.#persistKey!)
+      if (raw instanceof Promise) {
+        raw.then(data => this.#parseHydration(data)).catch(() => {})
+      } else {
+        this.#parseHydration(raw)
+      }
+    } catch (e) { /* Ignore storage errors to prevent the app from crashing. */ }
+  }
+
+  #parseHydration(raw: string | null) {
+    if (!raw) return
+    try {
+      const parsed: [string, CacheEntry<any>][] = JSON.parse(raw)
+      const now = Date.now()
+      parsed.forEach(([k, e]) => {
+        // Only enter unexpired data into RAM!
+        if (e.expiry > now) {
+          this.#store.set(k, e)
+          e.tags?.forEach(tag => {
+            if (!this.#tags.has(tag)) this.#tags.set(tag, new Set())
+            this.#tags.get(tag)!.add(k)
+          })
+        }
+      })
+    } catch (e) { /* Ignore corrupt JSON */ }
+  }
+
+  // Save data from RAM to storage with debouncing (Anti-Lag)
+  #sync() {
+    if (!this.#persistKey || !this.#storage) return
+    if (this.#syncTimer) clearTimeout(this.#syncTimer)
+    
+    this.#syncTimer = setTimeout(async () => {
+      try {
+        const entries = Array.from(this.#store.entries())
+        await this.#storage!.setItem(this.#persistKey!, JSON.stringify(entries))
+      } catch (e) {}
+    }, 50) 
+    
+    if (this.#syncTimer?.unref) this.#syncTimer.unref()
+  }
+
+  /* ============================= */
+  /* ========= EVENTS ============ */
+  /* ============================= */
 
   subscribe<T>(key: string, listener: CacheListener<T>): () => void {
     if (!this.#listeners.has(key)) this.#listeners.set(key, new Set())
@@ -55,13 +127,17 @@ export class SushiCache {
     this.#listeners.get(key)?.forEach((l) => l(data))
   }
 
+  /* ============================= */
+  /* ========= MUTATORS ========== */
+  /* ============================= */
+
   set<T>(key: string, data: T, options: number | { ttl?: number; tags?: string[] } = this.#defaultTTL) {
     const ttl = typeof options === 'number' ? options : (options.ttl ?? this.#defaultTTL)
     const tags = typeof options === 'number' ? [] : (options.tags ?? [])
 
-    this.delete(key)
+    this.delete(key) // Delete the old one first to make it clean
 
-    // Optimasi: Hapus yang paling lama sebelum masukin yang baru kalau udah penuh
+    // Optimization: Delete the oldest ones if they are full.
     if (this.#store.size >= this.#maxSize) {
       const oldest = this.#store.keys().next().value
       if (oldest !== undefined) this.delete(oldest)
@@ -75,6 +151,7 @@ export class SushiCache {
     })
 
     this.#notify(key, data)
+    this.#sync() // Trigger save to disk
   }
 
   get<T>(key: string): T | null {
@@ -84,7 +161,10 @@ export class SushiCache {
     if (Date.now() > entry.expiry) return (this.delete(key), this.#misses++, null)
 
     entry.lastAccess = Date.now()
-    if (this.#sliding) entry.expiry = Date.now() + this.#defaultTTL
+    if (this.#sliding) {
+      entry.expiry = Date.now() + this.#defaultTTL
+      this.#sync() // Sync because the expiry is extended
+    }
 
     this.#store.delete(key)
     this.#store.set(key, entry)
@@ -108,6 +188,7 @@ export class SushiCache {
       this.#onEvict?.(key, e.data)
       this.#store.delete(key)
       this.#notify(key, null)
+      this.#sync() // Update to disk
     }
   }
 
@@ -121,6 +202,7 @@ export class SushiCache {
   invalidateTag(tag: string) {
     this.#tags.get(tag)?.forEach(k => this.delete(k))
     this.#tags.delete(tag)
+    this.#sync()
   }
 
   clear() {
@@ -128,7 +210,15 @@ export class SushiCache {
     this.#store.clear()
     this.#tags.clear()
     this.#listeners.forEach((_, k) => this.#notify(k, null))
+    
+    if (this.#persistKey && this.#storage) {
+      Promise.resolve(this.#storage.removeItem(this.#persistKey)).catch(() => {})
+    }
   }
+
+  /* ============================= */
+  /* ======== RESOLVERS ========== */
+  /* ============================= */
 
   async getOrSet<T>(key: string, fetcher: () => Promise<T>, ttl = this.#defaultTTL): Promise<T> {
     const cached = this.get<T>(key)
@@ -161,11 +251,20 @@ export class SushiCache {
   }
 
   pruneExpired() {
-    this.#store.forEach((e, k) => Date.now() > e.expiry && this.delete(k))
+    let hasExpired = false
+    this.#store.forEach((e, k) => {
+      if (Date.now() > e.expiry) {
+        this.delete(k)
+        hasExpired = true
+      }
+    })
+    // Only call sync if something is deleted.
+    if (hasExpired) this.#sync() 
   }
 
   destroy() {
     if (this.#timer) clearInterval(this.#timer)
+    if (this.#syncTimer) clearTimeout(this.#syncTimer)
     this.clear()
     this.#listeners.clear()
     this.#fetches.clear()
